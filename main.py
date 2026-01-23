@@ -93,6 +93,9 @@ STRICT RULES:
 - The code must run without modification.
 - Follow the retrieved examples closely.
 - Do NOT invent APIs or classes.
+- Provide proper labellings, even if the number of animations are more. 
+- Focus on depth of understanding, considering the perspective of the user - It may be students, teachers, researchers etc. 
+- The labellings should not collide or overlap any other elements. Should be legible and clear to the user seeing the animation.
 """
 
 PROMPT = PromptTemplate(
