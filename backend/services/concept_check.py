@@ -2,7 +2,7 @@ import json
 from collections import Counter, defaultdict
 import re
 
-DATASET_PATH = "manim-dataset-111-fixed.jsonl"
+DATASET_PATH = "dataset/manim-dataset-111-fixed.jsonl"
 
 # Basic keyword-to-concept mapping (extendable)
 KEYWORD_CONCEPTS = {
