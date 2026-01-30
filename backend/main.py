@@ -18,10 +18,10 @@ from langchain_ollama import OllamaLLM
 # CONFIG
 # =========================
 
-DATASET_PATH = "dataset/manim-dataset-111-fixed.jsonl"
+DATASET_PATH = "manim-dataset.jsonl"
 FAISS_DIR = "manim_faiss_store"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-LLM_MODEL = "qwen2.5-coder:latest" 
+LLM_MODEL = "qwen2.5-coder:latest"  # must exist in Ollama
 TOP_K = 5
 
 
@@ -101,16 +101,42 @@ LAYOUT & LABELING RULES:
 - Avoid placing text directly on top of graphs or objects.
 - Use consistent font sizes and spacing.
 
-ANIMATION RULES:
+ANIMATION FLOW RULES (CRITICAL):
 - Introduce elements step-by-step (no sudden clutter).
+- NEVER allow text or formulas to accumulate on screen.
+- Any explanatory Text or MathTex MUST fade out after it has been shown.
+- Only persistent elements (titles, axes, graphs, core shapes) may remain.
+- All temporary explanatory content must be removed before introducing new content.
+
+TEXT MANAGEMENT RULES (VERY IMPORTANT):
+- Define a helper function inside the Scene:
+
+    def show_and_fade(self, obj, wait=0.6):
+        self.play(Write(obj))
+        self.wait(wait)
+        self.play(FadeOut(obj))
+
+- Use this function for:
+    - All explanatory Text
+    - All MathTex formulas
+    - All labels that are not structural
+
+- DO NOT fade:
+    - Scene titles
+    - Final summary text
+    - Coordinate axes
+    - Graphs and plots
+    - Core geometric objects
+
+ANIMATION RULES:
 - Use Create, Write, Transform, FadeIn, FadeOut explicitly.
 - Avoid unnecessary animation effects.
 - Maintain focus on concept clarity rather than visual flair.
 
 FAIL-SAFE RULE:
 - If the requested animation is complex, produce a correct and simpler conceptual visualization instead of attempting a complex one.
-
 """
+
 
 PROMPT = PromptTemplate(
     input_variables=["context", "question"],
@@ -180,3 +206,4 @@ if __name__ == "__main__":
         code = rag.generate(query)
         print("\nGenerated Manim Code:\n")
         print(code)
+
