@@ -18,7 +18,7 @@ from langchain_ollama import OllamaLLM
 # CONFIG
 # =========================
 
-DATASET_PATH = "manim-dataset.jsonl"
+DATASET_PATH = "dataset/manim-dataset.jsonl"
 FAISS_DIR = "manim_faiss_store"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 LLM_MODEL = "qwen2.5-coder:latest"  # must exist in Ollama
