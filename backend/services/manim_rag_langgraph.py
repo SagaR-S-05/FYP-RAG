@@ -1,5 +1,5 @@
 # ============================================================
-# Manim RAG with LangGraph Validation & Retry
+# Manim RAG with LangGraph Validation, Retry & Syntax Repair
 # ============================================================
 
 import json
@@ -21,8 +21,8 @@ from langgraph.graph import StateGraph, END
 # CONFIG
 # ============================================================
 
-DATASET_PATH = r"D:\FY docs\FYP-RAG\backend\dataset\manim-dataset.jsonl"
-FAISS_DIR = r"D:\FY docs\FYP-RAG\backend\manim_faiss_store"
+DATASET_PATH = r"manim-dataset.jsonl"
+FAISS_DIR = r"manim_faiss_store"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 LLM_MODEL = "qwen2.5-coder:latest"
 TOP_K = 5
@@ -81,7 +81,7 @@ def create_or_load_faiss(docs: List[Document]) -> FAISS:
 
 
 # ============================================================
-# PROMPT
+# PROMPT (GENERATOR)
 # ============================================================
 
 SYSTEM_RULES = """
@@ -143,6 +143,7 @@ FORBIDDEN_KEYWORDS = [
     "__import__",
 ]
 
+
 def structural_validator(code: str) -> bool:
     if "from manim import *" not in code:
         return False
@@ -183,14 +184,14 @@ def manim_semantic_validator(code: str) -> bool:
     return sum(1 for k in required_hits if k in code) >= 2
 
 
-def validate_code(code: str) -> tuple[bool, Optional[str]]:
+def validate_code(code: str) -> tuple[bool, Optional[str], Optional[str]]:
     if not structural_validator(code):
-        return False, "Structural validation failed"
+        return False, "STRUCTURAL", "Structural validation failed"
     if not syntax_validator(code):
-        return False, "Python syntax error"
+        return False, "SYNTAX", "Python syntax error"
     if not manim_semantic_validator(code):
-        return False, "Manim semantic validation failed"
-    return True, None
+        return False, "SEMANTIC", "Manim semantic validation failed"
+    return True, None, None
 
 
 # ============================================================
@@ -203,11 +204,12 @@ class RAGState(TypedDict):
     code: Optional[str]
     is_valid: bool
     error: Optional[str]
+    error_type: Optional[str]
     attempts: int
 
 
 # ============================================================
-# MANIM RAG ENGINE WITH LANGGRAPH
+# MANIM RAG ENGINE
 # ============================================================
 
 class ManimRAG:
@@ -220,7 +222,7 @@ class ManimRAG:
         self.retriever = self.vectorstore.as_retriever(
             search_type="similarity",
             search_kwargs={"k": TOP_K}
-        )   
+        )
 
         self.llm = OllamaLLM(
             model=LLM_MODEL,
@@ -251,8 +253,13 @@ class ManimRAG:
         }
 
     def _validate(self, state: RAGState) -> RAGState:
-        ok, error = validate_code(state["code"])
-        return {**state, "is_valid": ok, "error": error}
+        ok, error_type, error_msg = validate_code(state["code"])
+        return {
+            **state,
+            "is_valid": ok,
+            "error": error_msg,
+            "error_type": error_type
+        }
 
     def _fix(self, state: RAGState) -> RAGState:
         feedback = f"""
@@ -268,11 +275,29 @@ Output ONLY corrected Python code.
 """
         return {**state, "query": state["query"] + "\n\n" + feedback}
 
+    def _fix_syntax(self, state: RAGState) -> RAGState:
+        prompt = f"""
+The following Manim code has PYTHON SYNTAX ERRORS.
+
+RULES:
+- Fix ONLY Python syntax errors
+- Do NOT change logic, structure, or animation order
+- Do NOT add or remove features
+- Output ONLY corrected Python code
+
+CODE:
+{state['code']}
+"""
+        fixed_code = self.llm.invoke(prompt)
+        return {**state, "code": fixed_code}
+
     def _should_continue(self, state: RAGState) -> str:
         if state["is_valid"]:
             return "end"
         if state["attempts"] >= MAX_ATTEMPTS:
             return "end"
+        if state["error_type"] == "SYNTAX":
+            return "fix_syntax"
         return "fix"
 
     def _build_graph(self):
@@ -282,6 +307,7 @@ Output ONLY corrected Python code.
         graph.add_node("generate", self._generate)
         graph.add_node("validate", self._validate)
         graph.add_node("fix", self._fix)
+        graph.add_node("fix_syntax", self._fix_syntax)
 
         graph.set_entry_point("retrieve")
 
@@ -293,11 +319,13 @@ Output ONLY corrected Python code.
             self._should_continue,
             {
                 "fix": "fix",
+                "fix_syntax": "fix_syntax",
                 "end": END
             }
         )
 
         graph.add_edge("fix", "generate")
+        graph.add_edge("fix_syntax", "validate")
 
         return graph.compile()
 
@@ -312,6 +340,7 @@ Output ONLY corrected Python code.
             "code": None,
             "is_valid": False,
             "error": None,
+            "error_type": None,
             "attempts": 0
         })
 
@@ -324,12 +353,12 @@ Output ONLY corrected Python code.
 
 
 # ============================================================
-# CLI (OPTIONAL – SAFE FOR FASTAPI REMOVAL)
+# CLI (OPTIONAL)
 # ============================================================
 
 if __name__ == "__main__":
     rag = ManimRAG()
-    print("Manim RAG with LangGraph ready. Type 'exit' to quit.")
+    print("Manim RAG with syntax-aware LangGraph ready. Type 'exit' to quit.")
 
     while True:
         q = input("\n> ").strip()
