@@ -31,7 +31,7 @@ def main():
 
         try:
             code = rag.generate(prompt)
-            valid, error = validate_code(code)
+            valid, error_type, error = validate_code(code)
 
             elapsed = time.time() - start
 
@@ -44,6 +44,7 @@ def main():
 
             stats["pass"] += 1
             print("  ✅ PASS\n")
+
 
         except Exception as e:
             elapsed = time.time() - start
