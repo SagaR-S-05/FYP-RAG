@@ -1,0 +1,49 @@
+[
+  "Show how a function changes as x increases using a graph",
+  "Visualize the slope of a curve at different points",
+  "Animate the concept of area under a curve",
+  "Demonstrate how vectors add together visually",
+  "Explain matrix multiplication using geometric transformations",
+
+  "Visualize probability distribution using bars or curves",
+  "Show how mean and variance affect a data distribution",
+  "Animate random sampling from a distribution",
+  "Illustrate how normalization rescales data",
+  "Explain correlation between two variables visually",
+
+  "Visualize gradient descent on a simple loss curve",
+  "Show how changing learning rate affects convergence",
+  "Explain the idea of loss minimization using animation",
+  "Animate parameter updates during training",
+  "Demonstrate how optimization finds a minimum",
+
+  "Visualize linear regression fitting a line to data points",
+  "Show how prediction error changes as a line fits better",
+  "Explain logistic regression decision boundary visually",
+  "Animate how a classifier separates two classes",
+  "Show difference between supervised and unsupervised learning",
+
+  "Explain bias versus variance using curves or models",
+  "Visualize overfitting and underfitting on training data",
+  "Demonstrate model evaluation using accuracy concept",
+  "Illustrate train vs test data split",
+  "Show how model complexity affects performance",
+
+  "Visualize a simple neural network processing input",
+  "Show data flowing through layers of a neural network",
+  "Explain activation functions using graphs",
+  "Animate forward propagation in a neural network",
+  "Demonstrate error flowing backward conceptually",
+
+  "Visualize dimensionality reduction conceptually",
+  "Show how PCA projects data to fewer dimensions",
+  "Explain curse of dimensionality using distance intuition",
+  "Animate clustering of data points",
+  "Show how clusters form step by step",
+
+  "Illustrate how attention focuses on important inputs",
+  "Explain word embeddings using vector space",
+  "Show how tokens are processed in sequence",
+  "Visualize encoder-decoder architecture conceptually",
+  "Demonstrate how transformers process information"
+]
