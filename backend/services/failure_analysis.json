@@ -1,0 +1,22 @@
+{
+  "summary": {
+    "OUT_OF_SCOPE": 13
+  },
+  "examples": {
+    "OUT_OF_SCOPE": [
+      "Demonstrate how vectors add together visually",
+      "Visualize probability distribution using bars or curves",
+      "Show how mean and variance affect a data distribution",
+      "Visualize gradient descent on a simple loss curve",
+      "Show how changing learning rate affects convergence",
+      "Visualize linear regression fitting a line to data points",
+      "Explain logistic regression decision boundary visually",
+      "Show difference between supervised and unsupervised learning",
+      "Explain bias versus variance using curves or models",
+      "Demonstrate model evaluation using accuracy concept",
+      "Show data flowing through layers of a neural network",
+      "Animate forward propagation in a neural network",
+      "Demonstrate error flowing backward conceptually"
+    ]
+  }
+}

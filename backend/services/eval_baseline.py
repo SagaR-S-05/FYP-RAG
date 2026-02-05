@@ -2,10 +2,10 @@ import json
 import time
 from collections import Counter
 
-from manim_rag_langgraph import ManimRAG, validate_code
+from manim_rag_langgraph_2 import ManimRAG, validate_code
 
 
-EVAL_PROMPTS_PATH = "eval_prompts.json"
+EVAL_PROMPTS_PATH = r"services\eval_prompts.json"
 OUTPUT_REPORT_PATH = "baseline_report.json"
 
 

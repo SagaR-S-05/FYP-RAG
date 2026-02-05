@@ -1,0 +1,244 @@
+{
+  "summary": {
+    "total_prompts": 39,
+    "passed": 27,
+    "failed": 12,
+    "baseline_accuracy_percent": 69.23
+  },
+  "details": [
+    {
+      "prompt": "Show how a function changes as x increases using a graph",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 18.35
+    },
+    {
+      "prompt": "Visualize the slope of a curve at different points",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 10.82
+    },
+    {
+      "prompt": "Animate the concept of area under a curve",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 6.05
+    },
+    {
+      "prompt": "Demonstrate how vectors add together visually",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 11.89
+    },
+    {
+      "prompt": "Visualize probability distribution using bars or curves",
+      "status": "FAIL",
+      "error": "Recursion limit of 25 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.\nFor troubleshooting, visit: https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT",
+      "time_sec": 196.12
+    },
+    {
+      "prompt": "Show how mean and variance affect a data distribution",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 17.83
+    },
+    {
+      "prompt": "Animate random sampling from a distribution",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 11.34
+    },
+    {
+      "prompt": "Illustrate how normalization rescales data",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 24.95
+    },
+    {
+      "prompt": "Explain correlation between two variables visually",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 20.35
+    },
+    {
+      "prompt": "Visualize gradient descent on a simple loss curve",
+      "status": "FAIL",
+      "error": "Recursion limit of 25 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.\nFor troubleshooting, visit: https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT",
+      "time_sec": 179.64
+    },
+    {
+      "prompt": "Show how changing learning rate affects convergence",
+      "status": "FAIL",
+      "error": "Recursion limit of 25 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.\nFor troubleshooting, visit: https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT",
+      "time_sec": 469.72
+    },
+    {
+      "prompt": "Explain the idea of loss minimization using animation",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 17.31
+    },
+    {
+      "prompt": "Animate parameter updates during training",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 16.52
+    },
+    {
+      "prompt": "Demonstrate how optimization finds a minimum",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 19.16
+    },
+    {
+      "prompt": "Visualize linear regression fitting a line to data points",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 14.23
+    },
+    {
+      "prompt": "Show how prediction error changes as a line fits better",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 23.5
+    },
+    {
+      "prompt": "Explain logistic regression decision boundary visually",
+      "status": "FAIL",
+      "error": "Recursion limit of 25 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.\nFor troubleshooting, visit: https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT",
+      "time_sec": 253.16
+    },
+    {
+      "prompt": "Animate how a classifier separates two classes",
+      "status": "FAIL",
+      "error": "Failed after 3 attempts: Manim semantic validation failed",
+      "time_sec": 21.14
+    },
+    {
+      "prompt": "Show difference between supervised and unsupervised learning",
+      "status": "FAIL",
+      "error": "Recursion limit of 25 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.\nFor troubleshooting, visit: https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT",
+      "time_sec": 271.21
+    },
+    {
+      "prompt": "Explain bias versus variance using curves or models",
+      "status": "FAIL",
+      "error": "Recursion limit of 25 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.\nFor troubleshooting, visit: https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT",
+      "time_sec": 179.43
+    },
+    {
+      "prompt": "Visualize overfitting and underfitting on training data",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 22.97
+    },
+    {
+      "prompt": "Demonstrate model evaluation using accuracy concept",
+      "status": "FAIL",
+      "error": "Recursion limit of 25 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.\nFor troubleshooting, visit: https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT",
+      "time_sec": 414.02
+    },
+    {
+      "prompt": "Illustrate train vs test data split",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 20.33
+    },
+    {
+      "prompt": "Show how model complexity affects performance",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 15.02
+    },
+    {
+      "prompt": "Visualize a simple neural network processing input",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 22.48
+    },
+    {
+      "prompt": "Show data flowing through layers of a neural network",
+      "status": "FAIL",
+      "error": "Recursion limit of 25 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.\nFor troubleshooting, visit: https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT",
+      "time_sec": 257.35
+    },
+    {
+      "prompt": "Explain activation functions using graphs",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 21.61
+    },
+    {
+      "prompt": "Animate forward propagation in a neural network",
+      "status": "FAIL",
+      "error": "Recursion limit of 25 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.\nFor troubleshooting, visit: https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT",
+      "time_sec": 188.59
+    },
+    {
+      "prompt": "Demonstrate error flowing backward conceptually",
+      "status": "FAIL",
+      "error": "Recursion limit of 25 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.\nFor troubleshooting, visit: https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT",
+      "time_sec": 321.96
+    },
+    {
+      "prompt": "Visualize dimensionality reduction conceptually",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 26.7
+    },
+    {
+      "prompt": "Show how PCA projects data to fewer dimensions",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 17.81
+    },
+    {
+      "prompt": "Explain curse of dimensionality using distance intuition",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 15.42
+    },
+    {
+      "prompt": "Animate clustering of data points",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 18.04
+    },
+    {
+      "prompt": "Show how clusters form step by step",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 13.33
+    },
+    {
+      "prompt": "Illustrate how attention focuses on important inputs",
+      "status": "FAIL",
+      "error": "Recursion limit of 25 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.\nFor troubleshooting, visit: https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT",
+      "time_sec": 152.51
+    },
+    {
+      "prompt": "Explain word embeddings using vector space",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 19.79
+    },
+    {
+      "prompt": "Show how tokens are processed in sequence",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 14.36
+    },
+    {
+      "prompt": "Visualize encoder-decoder architecture conceptually",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 21.82
+    },
+    {
+      "prompt": "Demonstrate how transformers process information",
+      "status": "PASS",
+      "error": null,
+      "time_sec": 17.21
+    }
+  ]
+}
