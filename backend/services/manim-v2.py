@@ -17,11 +17,18 @@ from langchain_ollama import OllamaLLM
 
 
 # =========================
+# PATH RESOLUTION
+# =========================
+
+BASE_DIR = Path(__file__).resolve().parents[1]   # backend/
+DATASET_PATH = BASE_DIR / "dataset" / "manim-dataset.jsonl"
+FAISS_DIR = BASE_DIR / "manim_faiss_store_v2"
+
+
+# =========================
 # CONFIG
 # =========================
 
-DATASET_PATH = r"backend\dataset/manim-dataset.jsonl"
-FAISS_DIR = "manim_faiss_store_v2"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 LLM_MODEL = "qwen2.5-coder:latest"
 
@@ -44,7 +51,7 @@ def normalize_prompt(text: str) -> str:
 # DATA LOADING
 # =========================
 
-def load_jsonl(path: str) -> List[dict]:
+def load_jsonl(path: Path) -> List[dict]:
     with open(path, "r", encoding="utf-8") as f:
         return [json.loads(line) for line in f]
 
@@ -90,12 +97,12 @@ MANIM CODE EXAMPLE:
 def create_faiss(docs: List[Document]) -> FAISS:
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
 
-    if Path(FAISS_DIR).exists():
+    if FAISS_DIR.exists():
         import shutil
         shutil.rmtree(FAISS_DIR)
 
     vectorstore = FAISS.from_documents(docs, embeddings)
-    vectorstore.save_local(FAISS_DIR)
+    vectorstore.save_local(str(FAISS_DIR))
     return vectorstore
 
 
@@ -113,6 +120,7 @@ RULES:
 - Generate NEW Manim code that satisfies the user request
 - Do NOT copy examples verbatim
 - Do NOT hallucinate APIs not shown in the references
+- NEVER wrap output in markdown or triple backticks
 - Prefer clarity, simplicity, and correctness
 
 STRICT OUTPUT RULES:
@@ -123,7 +131,7 @@ STRICT OUTPUT RULES:
 """
 
 PROMPT = PromptTemplate(
-    input_variables=["question", "references", "error"],
+    input_variables=["question", "references", "error", "system_rules"],
     template="""
 {system_rules}
 
@@ -140,6 +148,29 @@ TASK:
 Generate corrected Manim code.
 """
 )
+
+
+# =========================
+# OUTPUT SANITIZATION
+# =========================
+
+def strip_code_fences(code: str) -> str:
+    code = code.strip()
+
+    if code.startswith("```"):
+        lines = code.splitlines()
+
+        # Remove opening ``` or ```python
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+
+        # Remove closing ```
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+
+        code = "\n".join(lines)
+
+    return code.strip()
 
 
 # =========================
@@ -193,31 +224,29 @@ class ManimRAG:
             search_kwargs={"k": TOP_K}
         )
 
-        self.llm = OllamaLLM(
-            model=LLM_MODEL,
-            temperature=0.0
-        )
-
+        self.llm = OllamaLLM(model=LLM_MODEL, temperature=0.0)
         self.chain = PROMPT | self.llm
 
     def generate(self, query: str) -> str:
         docs = self.retriever.invoke(query)
 
         if not docs:
-            return f"# ❌ No relevant examples found for prompt:\n# {query}"
+            return f"# ❌ No relevant examples found for:\n# {query}"
 
         references = "\n\n---\n\n".join(doc.page_content for doc in docs)
 
         last_error = "None"
         last_code = ""
 
-        for attempt in range(1, MAX_REPAIR_ATTEMPTS + 1):
-            last_code = self.chain.invoke({
+        for _ in range(MAX_REPAIR_ATTEMPTS):
+            raw_code = self.chain.invoke({
                 "question": query,
                 "references": references,
                 "error": last_error,
                 "system_rules": SYSTEM_RULES
             })
+
+            last_code = strip_code_fences(raw_code)
 
             try:
                 validate(last_code)
@@ -225,7 +254,6 @@ class ManimRAG:
             except Exception as e:
                 last_error = str(e)
 
-        # Human-in-the-loop friendly failure
         return f"""
 # ⚠️ Validation failed after {MAX_REPAIR_ATTEMPTS} attempts
 # Last error:
@@ -249,6 +277,5 @@ if __name__ == "__main__":
         if query.lower() in {"exit", "quit"}:
             break
 
-        code = rag.generate(query)
         print("\nGenerated Manim Code:\n")
-        print(code)
+        print(rag.generate(query))
