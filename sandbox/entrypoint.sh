@@ -3,6 +3,16 @@ set -e
 
 mkdir -p /output
 
-manim -qk scene.py --media_dir /output > /output/render.log 2>&1
+# Run Manim
+manim -ql scene.py --media_dir /output > /output/render.log 2>&1
 
-mv /output/videos/*/video.mp4 /output/video.mp4
+# Find the generated mp4 (Manim output paths vary)
+VIDEO_FILE=$(find /output -type f -name "*.mp4" | head -n 1)
+
+if [ -z "$VIDEO_FILE" ]; then
+  echo "ERROR: No video file produced by Manim" >> /output/render.log
+  exit 1
+fi
+
+# Move to stable output path expected by backend
+mv "$VIDEO_FILE" /output/video.mp4

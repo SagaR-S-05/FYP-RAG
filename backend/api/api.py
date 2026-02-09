@@ -1,12 +1,12 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pathlib import Path
 import subprocess
 import tempfile
 import shutil
 import uuid
-import os
 import time
 
 from backend.main import ManimRAG
@@ -22,6 +22,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+Path("rendered_videos").mkdir(exist_ok=True)
+
+app.mount(
+    "/rendered_videos",
+    StaticFiles(directory="rendered_videos"),
+    name="videos"
+)
+
 
 # =========================
 # MODELS
@@ -32,14 +40,6 @@ class GenerateRequest(BaseModel):
 
 
 class GenerateResponse(BaseModel):
-    code: str
-
-
-class RenderRequest(BaseModel):
-    code: str
-
-
-class RenderResponse(BaseModel):
     status: str
     video_url: str | None = None
     error: str | None = None
@@ -85,7 +85,7 @@ def sanitize_code(code: str):
 
 
 # =========================
-# ENDPOINTS
+# SINGLE ENDPOINT
 # =========================
 
 @app.post("/generate", response_model=GenerateResponse)
@@ -100,73 +100,64 @@ def generate(req: GenerateRequest):
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt cannot be empty")
 
-    try:
-        code = rag.generate(prompt)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-    return {"code": code}
-
-
-@app.post("/render", response_model=RenderResponse)
-def render(req: RenderRequest):
-    code = req.code.strip()
-    if not code:
-        raise HTTPException(status_code=400, detail="code cannot be empty")
-
-    try:
-        sanitize_code(code)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
     job_id = str(uuid.uuid4())
     work_dir = Path(tempfile.mkdtemp(prefix="manim_job_"))
     output_dir = work_dir / "output"
     output_dir.mkdir()
 
-    scene_file = work_dir / "scene.py"
-    scene_file.write_text(code, encoding="utf-8")
-
-    docker_cmd = [
-        "docker", "run", "--rm",
-        "--network", "none",
-        "--cpus", "1",
-        "--memory", "2g",
-        "-v", f"{scene_file}:/app/scene.py:ro",
-        "-v", f"{output_dir}:/output",
-        "manim-sandbox:latest"
-    ]
-
     try:
-        start = time.time()
+        # 1. Generate Manim code
+        code = rag.generate(prompt)
 
-        proc = subprocess.run(
+        # 2. Sanitize generated code
+        sanitize_code(code)
+
+        # 3. Write scene
+        scene_file = work_dir / "scene.py"
+        scene_file.write_text(code, encoding="utf-8")
+
+        # 4. Run Docker sandbox (DO NOT check exit code)
+        docker_cmd = [
+            "docker", "run", "--rm",
+            "--network", "none",
+            "--cpus", "1",
+            "--memory", "2g",
+            "-v", f"{scene_file}:/app/scene.py:ro",
+            "-v", f"{output_dir}:/output",
+            "manim-sandbox:latest"
+        ]
+
+        result = subprocess.run(
             docker_cmd,
             timeout=120,
+            check=False,        # ← IMPORTANT
             capture_output=True,
             text=True
         )
 
-        duration = time.time() - start
-
+        # 5. Success condition = video exists
         video_path = output_dir / "video.mp4"
         if not video_path.exists():
             raise RuntimeError(
-                f"Render failed.\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+                "Render failed. "
+                f"Docker exit code: {result.returncode}\n"
+                f"STDERR:\n{result.stderr}\n"
+                f"Logs at: {output_dir}"
             )
 
-        # --- TEMPORARY LOCAL URL (NO STORAGE LAYER) ---
+        # 6. Expose video
         public_dir = Path("rendered_videos")
         public_dir.mkdir(exist_ok=True)
 
         final_path = public_dir / f"{job_id}.mp4"
         shutil.move(video_path, final_path)
 
-        video_url = f"/rendered_videos/{final_path.name}"
+        # 7. Cleanup only on success
+        shutil.rmtree(work_dir, ignore_errors=True)
 
         return {
             "status": "success",
-            "video_url": video_url,
+            "video_url": f"/rendered_videos/{final_path.name}",
             "error": None
         }
 
@@ -174,7 +165,10 @@ def render(req: RenderRequest):
         return {
             "status": "failure",
             "video_url": None,
-            "error": "Render timed out"
+            "error": (
+                "Render timed out. "
+                f"Logs preserved at: {output_dir}"
+            )
         }
 
     except Exception as exc:
@@ -183,6 +177,3 @@ def render(req: RenderRequest):
             "video_url": None,
             "error": str(exc)
         }
-
-    finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
