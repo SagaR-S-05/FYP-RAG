@@ -7,9 +7,12 @@ import subprocess
 import tempfile
 import shutil
 import uuid
-import time
+import sys
 
-from backend.main import ManimRAG
+# Add backend to path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from main import ManimRAG
 
 
 app = FastAPI(title="Manim RAG API")
@@ -43,6 +46,9 @@ class GenerateResponse(BaseModel):
     status: str
     video_url: str | None = None
     error: str | None = None
+    code: str | None = None
+    attempts: int | None = None
+    quality_score: float | None = None
 
 
 # =========================
@@ -106,11 +112,39 @@ def generate(req: GenerateRequest):
     output_dir.mkdir()
 
     try:
-        # 1. Generate Manim code
-        code = rag.generate(prompt)
+        # 1. Generate Manim code (returns dict now)
+        result = rag.generate(prompt)
+        
+        # Extract code from result dict
+        code = result.get('code', '')
+        success = result.get('success', False)
+        error_msg = result.get('error')
+        attempts = result.get('attempts', 0)
+        quality_score = result.get('quality_score', 0.0)
+
+        # If generation failed, return early
+        if not success or not code:
+            return {
+                "status": "failure",
+                "video_url": None,
+                "error": f"Code generation failed: {error_msg}",
+                "code": code,
+                "attempts": attempts,
+                "quality_score": quality_score
+            }
 
         # 2. Sanitize generated code
-        sanitize_code(code)
+        try:
+            sanitize_code(code)
+        except ValueError as e:
+            return {
+                "status": "failure",
+                "video_url": None,
+                "error": f"Security check failed: {str(e)}",
+                "code": code,
+                "attempts": attempts,
+                "quality_score": quality_score
+            }
 
         # 3. Write scene
         scene_file = work_dir / "scene.py"
@@ -127,7 +161,7 @@ def generate(req: GenerateRequest):
             "manim-sandbox:latest"
         ]
 
-        result = subprocess.run(
+        result_proc = subprocess.run(
             docker_cmd,
             timeout=120,
             check=False,        # ← IMPORTANT
@@ -138,12 +172,18 @@ def generate(req: GenerateRequest):
         # 5. Success condition = video exists
         video_path = output_dir / "video.mp4"
         if not video_path.exists():
-            raise RuntimeError(
-                "Render failed. "
-                f"Docker exit code: {result.returncode}\n"
-                f"STDERR:\n{result.stderr}\n"
-                f"Logs at: {output_dir}"
-            )
+            return {
+                "status": "failure",
+                "video_url": None,
+                "error": (
+                    f"Render failed. Docker exit code: {result_proc.returncode}\n"
+                    f"STDERR:\n{result_proc.stderr}\n"
+                    f"Logs at: {output_dir}"
+                ),
+                "code": code,
+                "attempts": attempts,
+                "quality_score": quality_score
+            }
 
         # 6. Expose video
         public_dir = Path("rendered_videos")
@@ -158,7 +198,10 @@ def generate(req: GenerateRequest):
         return {
             "status": "success",
             "video_url": f"/rendered_videos/{final_path.name}",
-            "error": None
+            "error": None,
+            "code": code,
+            "attempts": attempts,
+            "quality_score": quality_score
         }
 
     except subprocess.TimeoutExpired:
@@ -168,12 +211,18 @@ def generate(req: GenerateRequest):
             "error": (
                 "Render timed out. "
                 f"Logs preserved at: {output_dir}"
-            )
+            ),
+            "code": result.get('code') if 'result' in locals() else None,
+            "attempts": None,
+            "quality_score": None
         }
 
     except Exception as exc:
         return {
             "status": "failure",
             "video_url": None,
-            "error": str(exc)
+            "error": str(exc),
+            "code": result.get('code') if 'result' in locals() else None,
+            "attempts": None,
+            "quality_score": None
         }
