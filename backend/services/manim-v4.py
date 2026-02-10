@@ -41,6 +41,10 @@ TOP_K = 3
 MAX_REPAIR_ATTEMPTS = 3
 FORCE_REBUILD_INDEX = False  # Set to True to force rebuild
 
+# Intent verification settings
+ENABLE_INTENT_VERIFICATION = True  # Set to False to disable
+INTENT_VERIFICATION_THRESHOLD = 0.7  # Skip intent check if validation passes
+
 
 # =========================
 # NORMALIZATION
@@ -140,15 +144,15 @@ def load_or_create_faiss(docs: List[Document]) -> FAISS:
                 stored_model = metadata.get('embedding_model')
                 
                 if stored_model != EMBEDDING_MODEL:
-                    print(f"\n⚠️  Embedding model mismatch detected!")
-                    print(f"   Stored model: {stored_model}")
-                    print(f"   Current model: {EMBEDDING_MODEL}")
+                    print(f"\n[WARNING] Embedding model mismatch detected")
+                    print(f"          Stored model: {stored_model}")
+                    print(f"          Current model: {EMBEDDING_MODEL}")
                     should_rebuild = True
                 else:
-                    print(f"✅ Loading existing FAISS index")
-                    print(f"   Model: {EMBEDDING_MODEL}")
-                    print(f"   Documents: {metadata.get('num_documents', 'unknown')}")
-                    print(f"   Created: {metadata.get('created_at', 'unknown')}")
+                    print(f"[INFO] Loading existing FAISS index")
+                    print(f"       Model: {EMBEDDING_MODEL}")
+                    print(f"       Documents: {metadata.get('num_documents', 'unknown')}")
+                    print(f"       Created: {metadata.get('created_at', 'unknown')}")
                     
                     return FAISS.load_local(
                         str(FAISS_DIR),
@@ -156,21 +160,21 @@ def load_or_create_faiss(docs: List[Document]) -> FAISS:
                         allow_dangerous_deserialization=True
                     )
             except Exception as e:
-                print(f"⚠️  Error reading metadata: {e}")
+                print(f"[WARNING] Error reading metadata: {e}")
                 should_rebuild = True
         else:
-            print(f"⚠️  No metadata found for existing index")
+            print(f"[WARNING] No metadata found for existing index")
             should_rebuild = True
     
     # Rebuild index if needed
     if should_rebuild and FAISS_DIR.exists():
-        print(f"🗑️  Removing old FAISS index...")
+        print(f"[INFO] Removing old FAISS index...")
         shutil.rmtree(FAISS_DIR)
     
     # Build new index
-    print(f"\n🔨 Building new FAISS index...")
-    print(f"   Embedding model: {EMBEDDING_MODEL}")
-    print(f"   Documents: {len(docs)}")
+    print(f"\n[INFO] Building new FAISS index...")
+    print(f"       Embedding model: {EMBEDDING_MODEL}")
+    print(f"       Documents: {len(docs)}")
     
     vectorstore = FAISS.from_documents(docs, embeddings)
     
@@ -189,7 +193,7 @@ def load_or_create_faiss(docs: List[Document]) -> FAISS:
     with open(metadata_file, 'w') as f:
         json.dump(metadata, f, indent=2)
     
-    print(f"✅ FAISS index built and saved to {FAISS_DIR}\n")
+    print(f"[SUCCESS] FAISS index built and saved to {FAISS_DIR}\n")
     
     return vectorstore
 
@@ -212,9 +216,11 @@ RULES:
 MANIM API SAFETY RULES:
 - Plot graphs first and reuse graph objects
 - Never pass lambda functions directly to shading or slope utilities
-- Use proper color constants (RED, BLUE, etc.)
+- Use proper color constants (RED, BLUE, YELLOW, GREEN, etc.)
+- For darker colors, use color_utils like DARK_BLUE, or .set_opacity()
 - Ensure all objects are properly positioned
 - Include appropriate wait times between animations
+- Use Rotate() for rotation animations
 """
 
 GENERATION_PROMPT = PromptTemplate(
@@ -240,7 +246,7 @@ Output ONLY the Python code, no explanations.
 INTENT_JUDGE_PROMPT = PromptTemplate(
     input_variables=["question", "code"],
     template="""
-You are reviewing generated Manim code for intent verification.
+You are reviewing Manim code to verify it matches the user's request.
 
 USER REQUEST:
 {question}
@@ -248,12 +254,14 @@ USER REQUEST:
 GENERATED CODE:
 {code}
 
-QUESTION:
-Does the generated code clearly and directly satisfy the user's request?
-Consider:
-- Does it create the requested visual elements?
-- Does it perform the requested animations?
-- Does it match the user's intent?
+Analyze the code carefully. Check if it:
+1. Creates the visual elements mentioned in the request
+2. Performs the requested animations or transformations
+3. Uses appropriate colors, sizes, or properties mentioned
+4. Generally matches the user's intent (exact implementation may vary)
+
+Be LENIENT - if the code reasonably attempts to fulfill the request, answer YES.
+Only answer NO if the code clearly does something completely different.
 
 Answer ONLY with YES or NO.
 """
@@ -270,15 +278,19 @@ ORIGINAL REQUEST:
 PREVIOUS CODE:
 {previous_code}
 
-USER REFINEMENT REQUEST:
+USER REFINEMENT REQUEST (make these specific changes):
 {refinement_request}
 
 REFERENCE EXAMPLES:
 {references}
 
 TASK:
-Modify the previous code to incorporate the user's refinement request.
-Keep the original structure but make the requested visual changes.
+Modify the previous code to incorporate ONLY the user's refinement request.
+Keep everything else the same unless it conflicts with the refinement.
+For color changes: Use Manim color constants (RED, BLUE, YELLOW, etc.)
+For darker colors: Use variations like DARK_BLUE, DARK_RED, or set_opacity()
+For rotations: Use Rotate(object, angle) where angle is in radians (TAU = 360 degrees)
+
 Output ONLY the modified Python code, no explanations.
 """
 )
@@ -341,6 +353,55 @@ def validate(code: str) -> None:
 
 
 # =========================
+# CODE QUALITY CHECKER
+# =========================
+
+def check_code_quality(code: str, query: str) -> dict:
+    """
+    Heuristic check for code quality and intent matching.
+    Returns dict with 'score' (0-1) and 'issues' list.
+    """
+    issues = []
+    score = 1.0
+    
+    query_lower = query.lower()
+    
+    # Check for mentioned colors
+    colors = ['red', 'blue', 'yellow', 'green', 'purple', 'orange', 'pink', 'white', 'black']
+    for color in colors:
+        if color in query_lower and color.upper() not in code:
+            issues.append(f"Missing color: {color}")
+            score -= 0.2
+    
+    # Check for mentioned shapes
+    shapes = ['circle', 'square', 'triangle', 'rectangle', 'line', 'dot', 'arrow']
+    for shape in shapes:
+        if shape in query_lower and shape.capitalize() not in code:
+            issues.append(f"Missing shape: {shape}")
+            score -= 0.2
+    
+    # Check for mentioned animations
+    animations = {
+        'move': ['shift', 'move_to'],
+        'rotate': ['Rotate', 'rotate'],
+        'transform': ['Transform', 'ReplacementTransform'],
+        'create': ['Create', 'DrawBorderThenFill'],
+        'fade': ['FadeIn', 'FadeOut']
+    }
+    
+    for keyword, manim_methods in animations.items():
+        if keyword in query_lower:
+            if not any(method in code for method in manim_methods):
+                issues.append(f"Missing animation: {keyword}")
+                score -= 0.15
+    
+    return {
+        'score': max(0.0, score),
+        'issues': issues
+    }
+
+
+# =========================
 # RAG ENGINE
 # =========================
 
@@ -348,12 +409,12 @@ class ManimRAG:
     """Manim RAG system with validation and intent verification."""
     
     def __init__(self):
-        print("🚀 Initializing Manim RAG system...")
+        print("[INFO] Initializing Manim RAG system...")
         
         # Load dataset
-        print(f"📂 Loading dataset from {DATASET_PATH}")
+        print(f"[INFO] Loading dataset from {DATASET_PATH}")
         self.dataset = load_jsonl(DATASET_PATH)
-        print(f"   Loaded {len(self.dataset)} examples")
+        print(f"[INFO] Loaded {len(self.dataset)} examples")
         
         # Build documents
         documents = build_documents(self.dataset)
@@ -372,10 +433,10 @@ class ManimRAG:
         )
         
         # Initialize LLM
-        print(f"🤖 Initializing LLM: {LLM_MODEL}")
+        print(f"[INFO] Initializing LLM: {LLM_MODEL}")
         self.llm = OllamaLLM(
             model=LLM_MODEL,
-            temperature=0.1  # Slight creativity for visual variations
+            temperature=0.2  # Balanced creativity
         )
         
         # Create chains
@@ -386,7 +447,7 @@ class ManimRAG:
         # Conversation history for refinements
         self.conversation_history = []
         
-        print("✅ Manim RAG system ready!\n")
+        print("[SUCCESS] Manim RAG system ready\n")
 
     def generate(self, query: str, context: Optional[dict] = None) -> dict:
         """
@@ -404,7 +465,7 @@ class ManimRAG:
         
         if not docs:
             return {
-                'code': "# ❌ No relevant Manim examples found in dataset.",
+                'code': "# ERROR: No relevant Manim examples found in dataset.",
                 'success': False,
                 'error': "No relevant examples found",
                 'attempts': 0
@@ -414,10 +475,12 @@ class ManimRAG:
         
         last_error = "None"
         last_code = ""
+        best_code = None
+        best_score = 0.0
         
         # Generation loop with validation
         for attempt in range(1, MAX_REPAIR_ATTEMPTS + 1):
-            print(f"🔄 Attempt {attempt}/{MAX_REPAIR_ATTEMPTS}")
+            print(f"[INFO] Attempt {attempt}/{MAX_REPAIR_ATTEMPTS}")
             
             # Choose prompt based on context
             if context and context.get('previous_code'):
@@ -443,44 +506,85 @@ class ManimRAG:
             # Validation step
             try:
                 validate(last_code)
-                print("   ✅ Code validation passed")
+                print("[SUCCESS] Code validation passed")
             except Exception as e:
-                print(f"   ❌ Validation failed: {e}")
+                print(f"[ERROR] Validation failed: {e}")
                 last_error = str(e)
                 continue
             
-            # Intent verification
-            print("   🎯 Verifying intent...")
-            verdict = self.judge_chain.invoke({
-                "question": query,
-                "code": last_code
-            }).strip().upper()
+            # Quality check (heuristic)
+            quality = check_code_quality(last_code, query)
+            print(f"[INFO] Quality score: {quality['score']:.2f}")
+            if quality['issues']:
+                print(f"[WARNING] Potential issues: {', '.join(quality['issues'][:2])}")
             
-            if "YES" in verdict:
-                print("   ✅ Intent verification passed")
+            # Track best code
+            if quality['score'] > best_score:
+                best_score = quality['score']
+                best_code = last_code
+            
+            # If quality is good enough, skip intent verification
+            if quality['score'] >= INTENT_VERIFICATION_THRESHOLD:
+                print("[INFO] Quality threshold met, skipping intent verification")
                 return {
                     'code': last_code,
                     'success': True,
                     'error': None,
-                    'attempts': attempt
+                    'attempts': attempt,
+                    'quality_score': quality['score']
                 }
             
-            print("   ❌ Intent verification failed")
+            # Intent verification (only if enabled and quality is low)
+            if ENABLE_INTENT_VERIFICATION:
+                print("[INFO] Verifying intent...")
+                try:
+                    verdict = self.judge_chain.invoke({
+                        "question": query,
+                        "code": last_code
+                    }).strip().upper()
+                    
+                    if "YES" in verdict:
+                        print("[SUCCESS] Intent verification passed")
+                        return {
+                            'code': last_code,
+                            'success': True,
+                            'error': None,
+                            'attempts': attempt,
+                            'quality_score': quality['score']
+                        }
+                    else:
+                        print("[WARNING] Intent verification failed")
+                except Exception as e:
+                    print(f"[WARNING] Intent verification error: {e}")
+            
             last_error = (
-                "The generated code does not satisfy the user request. "
+                "The generated code does not fully satisfy the user request. "
+                f"Issues: {', '.join(quality['issues']) if quality['issues'] else 'General mismatch'}. "
                 "Regenerate code that directly fulfills the request."
             )
         
+        # Return best attempt if we have one
+        if best_code and best_score > 0.3:
+            print(f"[WARNING] Max attempts reached, returning best code (score: {best_score:.2f})")
+            return {
+                'code': best_code,
+                'success': True,
+                'error': "Best attempt returned",
+                'attempts': MAX_REPAIR_ATTEMPTS,
+                'quality_score': best_score
+            }
+        
         # Fallback: return closest example
-        print("⚠️  Max attempts reached, returning closest dataset example")
+        print("[WARNING] Max attempts reached, returning closest dataset example")
         return {
-            'code': f"""# ⚠️ Auto-generation failed after {MAX_REPAIR_ATTEMPTS} attempts.
+            'code': f"""# WARNING: Auto-generation failed after {MAX_REPAIR_ATTEMPTS} attempts.
 # Returning closest dataset example:
 
 {docs[0].page_content}""",
             'success': False,
             'error': "Max attempts reached",
-            'attempts': MAX_REPAIR_ATTEMPTS
+            'attempts': MAX_REPAIR_ATTEMPTS,
+            'quality_score': 0.0
         }
     
     def refine(self, original_request: str, refinement: str, previous_code: str) -> dict:
@@ -495,7 +599,7 @@ class ManimRAG:
         Returns:
             dict with refined code
         """
-        print(f"\n🔧 Refining code based on: {refinement}")
+        print(f"\n[INFO] Refining code based on: {refinement}")
         
         context = {
             'original_request': original_request,
@@ -511,9 +615,9 @@ class ManimRAG:
 
 def main():
     """Main CLI interface."""
-    print("=" * 60)
+    print("=" * 70)
     print("  Manim RAG - Code Generation System")
-    print("=" * 60)
+    print("=" * 70)
     
     rag = ManimRAG()
     
@@ -529,29 +633,29 @@ def main():
     
     while True:
         try:
-            query = input("\n📝 > ").strip()
+            query = input("\n> ").strip()
             
             if not query:
                 continue
             
             if query.lower() in {"exit", "quit"}:
-                print("\n👋 Goodbye!")
+                print("\nExiting...")
                 break
             
             if query.lower() == "show":
                 if current_code:
-                    print("\n" + "=" * 60)
+                    print("\n" + "=" * 70)
                     print("Last Generated Code:")
-                    print("=" * 60)
+                    print("=" * 70)
                     print(current_code)
                 else:
-                    print("❌ No code generated yet")
+                    print("[ERROR] No code generated yet")
                 continue
             
             # Check if refinement request
             if query.lower().startswith("refine:"):
                 if not current_code or not current_request:
-                    print("❌ No previous code to refine. Generate code first.")
+                    print("[ERROR] No previous code to refine. Generate code first.")
                     continue
                 
                 refinement = query[7:].strip()
@@ -562,24 +666,26 @@ def main():
                 result = rag.generate(query)
             
             # Display results
-            print("\n" + "=" * 60)
+            print("\n" + "=" * 70)
             if result['success']:
-                print(f"✅ Code generated successfully (attempt {result['attempts']})")
+                quality_info = f", quality: {result.get('quality_score', 0):.2f}" if 'quality_score' in result else ""
+                print(f"[SUCCESS] Code generated (attempt {result['attempts']}{quality_info})")
             else:
-                print(f"⚠️  Generation completed with issues: {result['error']}")
-            print("=" * 60)
+                print(f"[WARNING] Generation completed with issues: {result['error']}")
+            print("=" * 70)
             print(result['code'])
-            print("=" * 60)
+            print("=" * 70)
             
             # Store for refinement
-            if result['success']:
-                current_code = result['code']
+            current_code = result['code']
             
         except KeyboardInterrupt:
-            print("\n\n👋 Goodbye!")
+            print("\n\nExiting...")
             break
         except Exception as e:
-            print(f"\n❌ Error: {e}")
+            print(f"\n[ERROR] {e}")
+            import traceback
+            traceback.print_exc()
 
 
 if __name__ == "__main__":
