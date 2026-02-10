@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
-import { Plus, Send, MessageSquare, Trash2 } from 'lucide-react';
+import { useState, useRef, useEffect } from "react";
+import { Plus, Send, MessageSquare, Trash2 } from "lucide-react";
 
 export function ChatInterface({
   chats,
@@ -7,22 +7,22 @@ export function ChatInterface({
   setCurrentChatId,
   saveChats,
 }) {
-  const [inputValue, setInputValue] = useState('');
+  const [inputValue, setInputValue] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const messagesEndRef = useRef(null);
   const [deleteChatId, setDeleteChatId] = useState(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
-  const currentChat = chats.find(chat => chat.id === currentChatId);
+  const currentChat = chats.find((chat) => chat.id === currentChatId);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [currentChat?.messages]);
 
   const createNewChat = () => {
     const newChat = {
       id: Date.now().toString(),
-      title: 'New Chat',
+      title: "New Chat",
       messages: [],
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -32,12 +32,25 @@ export function ChatInterface({
     setCurrentChatId(newChat.id);
   };
 
-  const generateMockVideo = async (prompt) => {
-    // Simulate video generation delay
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // Return a mock video URL
-    return 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+  const generateVideo = async (prompt) => {
+    const res = await fetch("http://localhost:8000/generate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ prompt }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Server responded with status ${res.status}`);
+    }
+
+    const data = await res.json();
+    if (!data || typeof data.code !== "string") {
+      throw new Error("Invalid response from server");
+    }
+
+    return data.code;
   };
 
   const handleSubmit = async (e) => {
@@ -64,7 +77,7 @@ export function ChatInterface({
     // Add user message
     const userMessage = {
       id: `msg-${Date.now()}`,
-      role: 'user',
+      role: "user",
       content: inputValue,
       timestamp: new Date(),
     };
@@ -74,26 +87,29 @@ export function ChatInterface({
       ...chatToUpdate,
       messages: updatedMessages,
       updatedAt: new Date(),
-      title: chatToUpdate.messages.length === 0 ? inputValue.slice(0, 50) : chatToUpdate.title,
+      title:
+        chatToUpdate.messages.length === 0
+          ? inputValue.slice(0, 50)
+          : chatToUpdate.title,
     };
 
-    updatedChats = updatedChats.map(chat =>
-      chat.id === chatToUpdate.id ? chatToUpdate : chat
+    updatedChats = updatedChats.map((chat) =>
+      chat.id === chatToUpdate.id ? chatToUpdate : chat,
     );
     saveChats(updatedChats);
-    setInputValue('');
+    setInputValue("");
     setIsGenerating(true);
 
     try {
-      // Generate video
-      const videoUrl = await generateMockVideo(inputValue);
+      // Call backend to generate Manim code
+      const code = await generateVideo(inputValue);
 
-      // Add assistant message with video
+      // Add assistant message with returned Manim code
       const assistantMessage = {
         id: `msg-${Date.now()}`,
-        role: 'assistant',
-        content: `Generated video for: "${inputValue}"`,
-        videoUrl,
+        role: "assistant",
+        content: `Generated Manim code for: "${inputValue}"`,
+        code,
         timestamp: new Date(),
       };
 
@@ -104,19 +120,19 @@ export function ChatInterface({
         updatedAt: new Date(),
       };
 
-      updatedChats = updatedChats.map(chat =>
-        chat.id === chatToUpdate.id ? chatToUpdate : chat
+      updatedChats = updatedChats.map((chat) =>
+        chat.id === chatToUpdate.id ? chatToUpdate : chat,
       );
       saveChats(updatedChats);
     } catch (error) {
-      console.error('Error generating video:', error);
+      console.error("Error generating video:", error);
     } finally {
       setIsGenerating(false);
     }
   };
 
   const deleteChat = (id) => {
-    const updatedChats = chats.filter(chat => chat.id !== id);
+    const updatedChats = chats.filter((chat) => chat.id !== id);
     saveChats(updatedChats);
     if (currentChatId === id) {
       setCurrentChatId(null);
@@ -140,13 +156,13 @@ export function ChatInterface({
         </div>
 
         <div className="flex-1 overflow-y-auto px-2">
-          {chats.map(chat => (
+          {chats.map((chat) => (
             <div
               key={chat.id}
               className={`group flex items-center gap-2 mb-1 rounded-lg transition-colors ${
                 currentChatId === chat.id
-                  ? 'bg-[#C7D6C1]'
-                  : 'hover:bg-[#C7D6C1]/50'
+                  ? "bg-[#C7D6C1]"
+                  : "hover:bg-[#C7D6C1]/50"
               }`}
             >
               <button
@@ -180,32 +196,32 @@ export function ChatInterface({
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-6">
               <div className="max-w-3xl mx-auto space-y-6">
-                {currentChat.messages.map(message => (
+                {currentChat.messages.map((message) => (
                   <div
                     key={message.id}
                     className={`flex ${
-                      message.role === 'user' ? 'justify-end' : 'justify-start'
+                      message.role === "user" ? "justify-end" : "justify-start"
                     }`}
                   >
                     <div
                       className={`max-w-[80%] rounded-2xl p-4 ${
-                        message.role === 'user'
-                          ? 'bg-[#546F54] text-[#F7F8F7]'
-                          : 'bg-white border border-[#D5CBBE]'
+                        message.role === "user"
+                          ? "bg-[#546F54] text-[#F7F8F7]"
+                          : "bg-white border border-[#D5CBBE]"
                       }`}
                     >
-                      {message.role === 'user' ? (
+                      {message.role === "user" ? (
                         <p>{message.content}</p>
                       ) : (
                         <div>
-                          <p className="mb-3 text-[#2F342E]">{message.content}</p>
-                          {message.videoUrl && (
+                          <p className="mb-3 text-[#2F342E]">
+                            {message.content}
+                          </p>
+                          {message.code && (
                             <div className="space-y-2">
-                              <video
-                                src={message.videoUrl}
-                                controls
-                                className="w-full rounded-lg"
-                              />
+                              <pre className="whitespace-pre-wrap bg-[#F6F6F6] p-3 rounded-lg text-sm overflow-auto">
+                                {message.code}
+                              </pre>
                             </div>
                           )}
                         </div>
@@ -217,11 +233,22 @@ export function ChatInterface({
                   <div className="flex justify-start">
                     <div className="bg-white border border-[#D5CBBE] rounded-2xl p-4">
                       <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 bg-[#AABCA3] rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                        <div className="w-2 h-2 bg-[#AABCA3] rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                        <div className="w-2 h-2 bg-[#AABCA3] rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                        <div
+                          className="w-2 h-2 bg-[#AABCA3] rounded-full animate-bounce"
+                          style={{ animationDelay: "0ms" }}
+                        />
+                        <div
+                          className="w-2 h-2 bg-[#AABCA3] rounded-full animate-bounce"
+                          style={{ animationDelay: "150ms" }}
+                        />
+                        <div
+                          className="w-2 h-2 bg-[#AABCA3] rounded-full animate-bounce"
+                          style={{ animationDelay: "300ms" }}
+                        />
                       </div>
-                      <p className="text-sm text-[#5A625A] mt-2">Generating video...</p>
+                      <p className="text-sm text-[#5A625A] mt-2">
+                        Generating video...
+                      </p>
                     </div>
                   </div>
                 )}
@@ -235,7 +262,7 @@ export function ChatInterface({
                 <div className="flex gap-3">
                   <input
                     value={inputValue}
-                    onChange={e => setInputValue(e.target.value)}
+                    onChange={(e) => setInputValue(e.target.value)}
                     placeholder="Describe the video you want to generate..."
                     disabled={isGenerating}
                     className="flex-1 h-9 rounded-md border border-[#D5CBBE] bg-[#FFFFFF] px-3 py-1 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
@@ -256,7 +283,9 @@ export function ChatInterface({
             <div className="text-center">
               <MessageSquare className="w-16 h-16 mx-auto mb-4 text-[#AABCA3]" />
               <h2 className="text-2xl mb-2 text-[#2F342E]">Start a New Chat</h2>
-              <p className="text-[#5A625A]">Click &quot;New Chat&quot; to begin generating videos</p>
+              <p className="text-[#5A625A]">
+                Click &quot;New Chat&quot; to begin generating videos
+              </p>
             </div>
           </div>
         )}
@@ -268,7 +297,9 @@ export function ChatInterface({
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
             <h3 className="text-xl mb-2 text-[#2F342E]">Delete Chat</h3>
             <p className="text-[#5A625A] mb-6">
-              Are you sure you want to delete this chat? All messages and generated videos will be permanently removed. This action cannot be undone.
+              Are you sure you want to delete this chat? All messages and
+              generated videos will be permanently removed. This action cannot
+              be undone.
             </p>
             <div className="flex gap-3 justify-end">
               <button
