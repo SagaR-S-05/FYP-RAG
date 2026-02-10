@@ -1,4 +1,6 @@
 .venv
 manim_faiss_store
 .gitgnore
-node_modules
+node_modules/
+rendered_videos/
+test_render/
