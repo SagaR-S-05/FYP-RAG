@@ -1,19 +1,19 @@
 import { useState } from "react";
+import { useSessions } from "../sessionContext.jsx";
 
 export default function Chat() {
   const [text, setText] = useState("");
-  const [videoUrl, setVideoUrl] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const { activeSession, addMessageToActiveSession } = useSessions();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     const trimmedText = text.trim();
-    if (!trimmedText) return;
+    if (!trimmedText || !activeSession) return;
 
     setLoading(true);
     setError(null);
-    setVideoUrl(null);
 
     try {
       const response = await fetch("/api/generate", {
@@ -31,10 +31,12 @@ export default function Chat() {
 
       const data = await response.json();
       if (data.video_url) {
-        setVideoUrl(data.video_url);
+        addMessageToActiveSession({ text: trimmedText, videoUrl: data.video_url });
       } else {
         throw new Error("No video_url in response");
       }
+
+      setText("");
     } catch (err) {
       setError(err.message || "Failed to generate video");
     } finally {
@@ -42,22 +44,36 @@ export default function Chat() {
     }
   };
 
+  const videos = activeSession?.videos ?? [];
+  const welcomeMessage = activeSession?.welcomeMessage;
+
   return (
     <div className="chatPage">
       <div className="chatContainer">
         <div className="chatMessages">
-          {videoUrl && (
-            <div className="videoContainer">
-              <video
-                className="generatedVideo"
-                src={videoUrl}
-                controls
-                autoPlay
-              >
-                Your browser does not support the video tag.
-              </video>
+          {welcomeMessage && (
+            <div className="welcomeMessage">
+              {welcomeMessage}
             </div>
           )}
+
+          {videos.length > 0 && (
+            <div className="videoList">
+              {videos.map((url, index) => (
+                <div key={`${activeSession.id}-video-${index}`} className="videoContainer">
+                  <video
+                    className="generatedVideo"
+                    src={url}
+                    controls
+                    autoPlay={index === videos.length - 1}
+                  >
+                    Your browser does not support the video tag.
+                  </video>
+                </div>
+              ))}
+            </div>
+          )}
+
           {error && (
             <div className="errorMessage" role="alert">
               {error}
