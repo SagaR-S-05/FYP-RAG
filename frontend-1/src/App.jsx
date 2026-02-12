@@ -2,7 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import Chat from "./pages/Chat.jsx";
 import About from "./pages/About.jsx";
 import VideoGallery from "./pages/VideoGallery.jsx";
-import { Sidebar, SidebarInset, SidebarTrigger, useSidebar } from "./components/sidebar.jsx";
+import {
+  Sidebar,
+  SidebarInset,
+  SidebarTrigger,
+  useSidebar,
+} from "./components/sidebar.jsx";
 import { useSessions } from "./sessionContext.jsx";
 import { Info, Lightbulb, MessageSquare, PlayCircle, Plus } from "lucide-react";
 
@@ -20,12 +25,29 @@ function useHashRoute() {
 }
 
 function useDarkMode() {
-  const [isDark, setIsDark] = useState(false);
+  const [isDark, setIsDark] = useState(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      const stored = localStorage.getItem("theme");
+      if (stored === "light") return false;
+      if (stored === "dark") return true;
+      // no stored preference -> default to dark
+      return true;
+    } catch (e) {
+      return true;
+    }
+  });
 
   useEffect(() => {
     const root = document.documentElement;
     if (isDark) root.classList.add("dark");
     else root.classList.remove("dark");
+
+    try {
+      localStorage.setItem("theme", isDark ? "dark" : "light");
+    } catch (e) {
+      // ignore localStorage errors
+    }
   }, [isDark]);
 
   return { isDark, setIsDark };
@@ -34,8 +56,14 @@ function useDarkMode() {
 function AppShell() {
   const hash = useHashRoute();
   const { isDark, setIsDark } = useDarkMode();
-  const { sessions, activeSession, activeSessionId, selectSession, createAndSelectSession, updateSessionTitle } =
-    useSessions();
+  const {
+    sessions,
+    activeSession,
+    activeSessionId,
+    selectSession,
+    createAndSelectSession,
+    updateSessionTitle,
+  } = useSessions();
   const { collapsed } = useSidebar();
   const [editingId, setEditingId] = useState(null);
   const [editingValue, setEditingValue] = useState("");
@@ -48,7 +76,7 @@ function AppShell() {
 
   const sortedSessions = useMemo(
     () => [...sessions].sort((a, b) => b.createdAt - a.createdAt),
-    [sessions]
+    [sessions],
   );
 
   const handleStartEditing = (session) => {
@@ -82,7 +110,7 @@ function AppShell() {
             }}
           >
             <span className="sidebarItemIcon">
-              <Info size={18} />
+              <Info size={20} />
             </span>
             {!collapsed && <span className="sidebarItemLabel">About</span>}
           </button>
@@ -99,9 +127,11 @@ function AppShell() {
             }}
           >
             <span className="sidebarItemIcon">
-              <PlayCircle size={18} />
+              <PlayCircle size={20} />
             </span>
-            {!collapsed && <span className="sidebarItemLabel">Video Gallery</span>}
+            {!collapsed && (
+              <span className="sidebarItemLabel">Video Gallery</span>
+            )}
           </button>
 
           <div className="sidebarDivider" />
@@ -115,7 +145,11 @@ function AppShell() {
                 return;
               }
               const id = createAndSelectSession();
-              if (!window.location.hash || window.location.hash === "#/about" || window.location.hash === "#/videos") {
+              if (
+                !window.location.hash ||
+                window.location.hash === "#/about" ||
+                window.location.hash === "#/videos"
+              ) {
                 window.location.hash = "#/";
               }
               if (id) {
@@ -124,17 +158,19 @@ function AppShell() {
             }}
           >
             <span className="sidebarItemIcon">
-              <Plus size={18} />
+              <Plus size={20} />
             </span>
             {!collapsed && <span className="sidebarItemLabel">New Chat</span>}
           </button>
 
           <div className="sidebarChatList">
             {sortedSessions.map((session) => {
-              const isActive = route === "chat" && session.id === activeSessionId;
+              const isActive =
+                route === "chat" && session.id === activeSessionId;
               const created = new Date(session.createdAt);
               const label = created.toLocaleTimeString();
-              const displayTitle = session.title || `Chat ${session.id.slice(-4)}`;
+              const displayTitle =
+                session.title || `Chat ${session.id.slice(-4)}`;
               const isEditing = editingId === session.id;
 
               return (
@@ -152,7 +188,7 @@ function AppShell() {
                   }}
                 >
                   <span className="sidebarItemIcon">
-                    <MessageSquare size={18} />
+                    <MessageSquare size={20} />
                   </span>
                   {!collapsed && (
                     <span className="sidebarChatText">
@@ -214,7 +250,7 @@ function AppShell() {
               aria-pressed={isDark}
               aria-label="Toggle theme"
             >
-              <Lightbulb size={18} />
+              <Lightbulb size={20} />
             </button>
           </header>
 

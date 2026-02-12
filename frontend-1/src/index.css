@@ -49,7 +49,9 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
   background-color: var(--background);
   color: var(--foreground);
   line-height: 1.5;
@@ -129,10 +131,13 @@ body {
   background-color: var(--secondary);
   color: var(--secondary-foreground);
   border: 1px solid var(--border);
-  padding: 0.5rem 1rem;
+  padding: 0.65rem 1rem;
   border-radius: 0.375rem;
   cursor: pointer;
-  font-size: 0.875rem;
+  font-size: 1.125rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   transition: background-color 0.2s;
 }
 
@@ -320,7 +325,7 @@ body {
 }
 
 .sidebarCollapsed {
-  width: 72px;
+  width: 88px;
 }
 
 .sidebarInset {
@@ -374,8 +379,8 @@ body {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
 }
 
 .sidebarItemLabel {
@@ -390,7 +395,6 @@ body {
   background-color: var(--border);
   margin: 0.5rem 0;
 }
-
 
 .sidebarNewChat {
   display: flex;
@@ -410,7 +414,6 @@ body {
 .sidebarNewChat:hover {
   background-color: var(--accent);
 }
-
 
 .sidebarChatList {
   display: flex;
@@ -441,7 +444,6 @@ body {
   background-color: var(--primary);
   color: var(--primary-foreground);
 }
-
 
 .sidebarChatTitle {
   display: block;
@@ -480,7 +482,6 @@ body {
   box-shadow: 0 0 0 2px var(--ring);
 }
 
-
 .sidebarNavItem {
   width: 100%;
   padding: 0.5rem 0.75rem;
@@ -506,12 +507,12 @@ body {
 .sidebarTrigger {
   border: 1px solid var(--border);
   border-radius: 999px;
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1rem;
+  font-size: 1.25rem;
   cursor: pointer;
 }
 

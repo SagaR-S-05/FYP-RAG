@@ -5,3 +5,4 @@ manim_faiss_store_v2
 node_modules/
 rendered_videos/
 test_render/
+.vscode
