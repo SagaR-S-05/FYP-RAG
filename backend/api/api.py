@@ -1,38 +1,15 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from pathlib import Path
 import subprocess
 import tempfile
 import shutil
-import uuid
-import sys
+import uuid 
 
-# Add backend to path for imports
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from backend.pipeline.rag_pipeline import ManimRAG
+from backend.db.crud import save_prompt, save_generated_code, save_video
 
-from main import ManimRAG
-
-
-app = FastAPI(title="Manim RAG API")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-Path("rendered_videos").mkdir(exist_ok=True)
-
-app.mount(
-    "/rendered_videos",
-    StaticFiles(directory="rendered_videos"),
-    name="videos"
-)
-
+router = APIRouter()
 
 # =========================
 # MODELS
@@ -91,11 +68,12 @@ def sanitize_code(code: str):
 
 
 # =========================
-# SINGLE ENDPOINT
+# ENDPOINT
 # =========================
 
-@app.post("/generate", response_model=GenerateResponse)
+@router.post("/generate", response_model=GenerateResponse)
 def generate(req: GenerateRequest):
+
     if rag is None:
         raise HTTPException(
             status_code=500,
@@ -106,123 +84,94 @@ def generate(req: GenerateRequest):
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt cannot be empty")
 
+    # 1 store prompt in DB
+    prompt_id = save_prompt(prompt)
+
     job_id = str(uuid.uuid4())
     work_dir = Path(tempfile.mkdtemp(prefix="manim_job_"))
     output_dir = work_dir / "output"
     output_dir.mkdir()
 
     try:
-        # 1. Generate Manim code (returns dict now)
+
         result = rag.generate(prompt)
-        
-        # Extract code from result dict
-        code = result.get('code', '')
-        success = result.get('success', False)
-        error_msg = result.get('error')
-        attempts = result.get('attempts', 0)
-        quality_score = result.get('quality_score', 0.0)
 
-        # If generation failed, return early
-        if not success or not code:
-            return {
-                "status": "failure",
-                "video_url": None,
-                "error": f"Code generation failed: {error_msg}",
-                "code": code,
-                "attempts": attempts,
-                "quality_score": quality_score
-            }
+        code = result.get("code", "")
+        success = result.get("success", False)
+        attempts = result.get("attempts", 0)
+        quality_score = result.get("quality_score", 0.0)
 
-        # 2. Sanitize generated code
-        try:
-            sanitize_code(code)
-        except ValueError as e:
-            return {
-                "status": "failure",
-                "video_url": None,
-                "error": f"Security check failed: {str(e)}",
-                "code": code,
-                "attempts": attempts,
-                "quality_score": quality_score
-            }
+        if not success:
+            return {"status": "failure", "error": "code generation failed"}
 
-        # 3. Write scene
+        # 2 save generated code
+        save_generated_code(prompt_id, code)
+
+        sanitize_code(code)
+
         scene_file = work_dir / "scene.py"
         scene_file.write_text(code, encoding="utf-8")
 
-        # 4. Run Docker sandbox (DO NOT check exit code)
-        docker_cmd = [
-            "docker", "run", "--rm",
-            "--network", "none",
-            "--cpus", "1",
-            "--memory", "2g",
-            "-v", f"{scene_file}:/app/scene.py:ro",
-            "-v", f"{output_dir}:/output",
-            "manim-sandbox:latest"
-        ]
+        # docker_cmd = [
+        #     "docker", "run", "--rm",
+        #     "--network", "none",
+        #     "--cpus", "1",
+        #     "--memory", "2g",
+        #     "-v", f"{scene_file}:/app/scene.py:ro",
+        #     "-v", f"{output_dir}:/output",
+        #     "manim-sandbox:latest"
+        # ]
 
-        result_proc = subprocess.run(
-            docker_cmd,
-            timeout=120,
-            check=False,        # ← IMPORTANT
-            capture_output=True,
-            text=True
-        )
+        # subprocess.run(
+        #     docker_cmd,
+        #     timeout=120,
+        #     check=False,
+        #     capture_output=True,
+        #     text=True
+        # )
+        
+        # TEMPORARY: Skip Docker rendering
+        video_url = None
+        
+        # Store generated code in DB
+        save_generated_code(prompt_id, code)
+        
+        return {
+            "status": "success",
+            "video_url": None,
+            "code": code,
+            "attempts": attempts,
+            "quality_score": quality_score
+        }
 
-        # 5. Success condition = video exists
         video_path = output_dir / "video.mp4"
-        if not video_path.exists():
-            return {
-                "status": "failure",
-                "video_url": None,
-                "error": (
-                    f"Render failed. Docker exit code: {result_proc.returncode}\n"
-                    f"STDERR:\n{result_proc.stderr}\n"
-                    f"Logs at: {output_dir}"
-                ),
-                "code": code,
-                "attempts": attempts,
-                "quality_score": quality_score
-            }
 
-        # 6. Expose video
+        if not video_path.exists():
+            return {"status": "failure", "error": "render failed"}
+
         public_dir = Path("rendered_videos")
         public_dir.mkdir(exist_ok=True)
 
         final_path = public_dir / f"{job_id}.mp4"
         shutil.move(video_path, final_path)
 
-        # 7. Cleanup only on success
+        video_url = f"/rendered_videos/{final_path.name}"
+
+        # 3 save video url
+        save_video(prompt_id, video_url)
+
         shutil.rmtree(work_dir, ignore_errors=True)
 
         return {
             "status": "success",
-            "video_url": f"/rendered_videos/{final_path.name}",
-            "error": None,
+            "video_url": video_url,
             "code": code,
             "attempts": attempts,
             "quality_score": quality_score
         }
 
-    except subprocess.TimeoutExpired:
-        return {
-            "status": "failure",
-            "video_url": None,
-            "error": (
-                "Render timed out. "
-                f"Logs preserved at: {output_dir}"
-            ),
-            "code": result.get('code') if 'result' in locals() else None,
-            "attempts": None,
-            "quality_score": None
-        }
-
     except Exception as exc:
         return {
             "status": "failure",
-            "video_url": None,
-            "error": str(exc),
-            "code": result.get('code') if 'result' in locals() else None,
-            "attempts": None,
-            "quality_score": None
+            "error": str(exc)
         }
