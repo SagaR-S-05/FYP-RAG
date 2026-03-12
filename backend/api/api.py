@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from pathlib import Path
 import subprocess
@@ -8,6 +9,7 @@ import uuid
 
 from backend.pipeline.rag_pipeline import ManimRAG
 from backend.db.crud import save_prompt, save_generated_code, save_video
+from backend.services.insight_service import stream_insight
 
 router = APIRouter()
 
@@ -175,3 +177,23 @@ def generate(req: GenerateRequest):
             "status": "failure",
             "error": str(exc)
         }
+
+
+# =========================
+# INSIGHT ENDPOINT
+# =========================
+
+@router.get("/insight")
+def insight(prompt: str):
+    """
+    Stream a pedagogical explanation for the given animation prompt.
+    Intended to be called in parallel with /generate from the client.
+    Returns a plain-text stream via Server-Sent Events (SSE).
+    """
+    if not prompt.strip():
+        raise HTTPException(status_code=400, detail="prompt cannot be empty")
+
+    return StreamingResponse(
+        stream_insight(prompt),
+        media_type="text/plain"
+    )

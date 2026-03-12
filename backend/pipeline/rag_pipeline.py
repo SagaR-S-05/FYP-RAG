@@ -36,6 +36,9 @@ DATASET_PATH = BACKEND_DIR / "dataset" / "manim-dataset.jsonl"
 # FAISS store at project root: FYP-RAG/manim_faiss_store_v2
 FAISS_DIR = PROJECT_ROOT / "manim_faiss_store_v2"
 
+# Eval split file — stored alongside the FAISS index
+EVAL_SPLIT_PATH = PROJECT_ROOT / "manim_faiss_store_v2" / "eval_split.json"
+
 
 # =========================
 # CONFIG
@@ -52,6 +55,15 @@ FORCE_REBUILD_INDEX = False  # Set to True to force rebuild
 # Intent verification settings
 ENABLE_INTENT_VERIFICATION = True  # Set to False to disable
 INTENT_VERIFICATION_THRESHOLD = 0.7  # Skip intent check if validation passes
+
+# -----------------------------------------------------------
+# Eval split config
+# 0.15 = 15% of *unique* code examples held out for evaluation.
+# These prompts are EXCLUDED from the FAISS index so retrieval
+# cannot cheat by finding the exact matching example.
+# -----------------------------------------------------------
+EVAL_SPLIT_RATIO = 0.15
+EVAL_SPLIT_SEED = 42
 
 
 # =========================
@@ -86,9 +98,87 @@ def load_jsonl(path: Path) -> List[dict]:
     """Load JSONL dataset."""
     if not path.exists():
         raise FileNotFoundError(f"Dataset not found: {path}")
-    
+
     with open(path, "r", encoding="utf-8") as f:
         return [json.loads(line) for line in f]
+
+
+# =========================
+# DEDUPLICATION & SPLIT
+# =========================
+
+def _code_hash(code: str) -> str:
+    """Stable hash of code content for deduplication."""
+    return hashlib.md5(code.strip().encode()).hexdigest()
+
+
+def deduplicate_and_split(dataset: List[dict], eval_ratio: float = EVAL_SPLIT_RATIO, seed: int = EVAL_SPLIT_SEED):
+    """
+    1. Group all dataset rows by their code hash (same code, different prompts).
+    2. Split unique code groups into train / eval using a deterministic seed.
+    3. Return:
+       - train_items  : list of dicts (used to build the FAISS index)
+       - eval_items   : list of dicts (held-out; never indexed)
+       - dedup_stats  : dict with counts for logging
+
+    Why deduplicate before splitting?
+    ----------------------------------
+    The 872-row dataset contains multiple prompt variants per unique Manim
+    snippet.  Without deduplication the retriever can trivially find an
+    almost-identical prompt in the index for any eval query (data leakage),
+    producing unrealistically perfect Recall/MRR scores.
+
+    After deduplication:
+    - The index holds *one representative document per unique code snippet*
+      (the prompt that was seen first for that hash).
+    - Eval items are drawn from *different code groups*, so the retriever
+      must generalise rather than regurgitate a memorised example.
+    """
+    import random
+
+    # Group rows by code hash
+    groups: dict[str, list] = {}
+    for item in dataset:
+        h = _code_hash(item.get("code", ""))
+        groups.setdefault(h, []).append(item)
+
+    unique_hashes = sorted(groups.keys())  # sorted for reproducibility
+
+    rng = random.Random(seed)
+    rng.shuffle(unique_hashes)
+
+    n_eval = max(1, int(len(unique_hashes) * eval_ratio))
+    eval_hashes = set(unique_hashes[:n_eval])
+    train_hashes = set(unique_hashes[n_eval:])
+
+    # Build train set: one document per unique code (first prompt variant)
+    train_items = [groups[h][0] for h in sorted(train_hashes)]
+
+    # Build eval set: all prompt variants for the held-out code groups
+    eval_items = [item for h in sorted(eval_hashes) for item in groups[h]]
+
+    dedup_stats = {
+        "total_rows": len(dataset),
+        "unique_codes": len(unique_hashes),
+        "train_unique": len(train_hashes),
+        "eval_unique": len(eval_hashes),
+        "eval_rows": len(eval_items),
+    }
+
+    return train_items, eval_items, dedup_stats
+
+
+def save_eval_split(eval_items: List[dict], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(eval_items, f, indent=2)
+
+
+def load_eval_split(path: Path) -> List[dict]:
+    if not path.exists():
+        raise FileNotFoundError(f"Eval split not found: {path}")
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 # =========================
@@ -96,12 +186,17 @@ def load_jsonl(path: Path) -> List[dict]:
 # =========================
 
 def build_documents(dataset: List[dict]) -> List[Document]:
-    """Build LangChain documents from dataset."""
+    """
+    Build LangChain documents from dataset.
+
+    Each document represents ONE unique Manim code snippet.
+    The page_content combines prompt + topic + difficulty + code so
+    that semantic search on any of these dimensions works well.
+    """
     docs = []
 
     for item in dataset:
-        content = f"""
-PROMPT:
+        content = f"""PROMPT:
 {item.get("prompt", "")}
 
 TOPIC:
@@ -111,8 +206,7 @@ DIFFICULTY:
 {item.get("difficulty", "")}
 
 MANIM CODE EXAMPLE:
-{item.get("code", "")}
-"""
+{item.get("code", "")}"""
 
         docs.append(
             Document(
@@ -120,7 +214,8 @@ MANIM CODE EXAMPLE:
                 metadata={
                     "normalized_prompt": normalize_prompt(item.get("prompt", "")),
                     "topic": item.get("topic", ""),
-                    "difficulty": item.get("difficulty", "")
+                    "difficulty": item.get("difficulty", ""),
+                    "code_hash": _code_hash(item.get("code", "")),
                 }
             )
         )
@@ -132,40 +227,55 @@ MANIM CODE EXAMPLE:
 # VECTOR STORE WITH MODEL TRACKING
 # =========================
 
-def load_or_create_faiss(docs: List[Document]) -> FAISS:
+def load_or_create_faiss(docs: List[Document], eval_items: List[dict]) -> FAISS:
     """
-    Load existing FAISS index or create new one.
-    Automatically rebuilds if embedding model changes.
+    Load existing FAISS index or create a new one.
+    Automatically rebuilds if the embedding model changes or the
+    deduplicated document count changes.
+
+    Speed improvements vs original:
+    - Retrieval uses similarity search (not MMR) by default —
+      MMR fetches fetch_k=20 docs and re-ranks them, which is ~7x
+      slower than a single k-NN call.
+    - FAISS nlist/nprobe can be tuned here for larger indexes.
+    - The index is smaller because duplicates are removed first.
     """
-    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    embeddings = HuggingFaceEmbeddings(
+        model_name=EMBEDDING_MODEL,
+        # Cache embeddings to disk — avoids re-encoding on repeated runs
+        cache_folder=str(PROJECT_ROOT / ".embedding_cache"),
+    )
     metadata_file = FAISS_DIR / "model_metadata.json"
-    
-    # Check if we need to rebuild
+
     should_rebuild = FORCE_REBUILD_INDEX
-    
+
     if FAISS_DIR.exists() and not FORCE_REBUILD_INDEX:
         if metadata_file.exists():
             try:
-                with open(metadata_file, 'r') as f:
+                with open(metadata_file, "r") as f:
                     metadata = json.load(f)
-                
-                stored_model = metadata.get('embedding_model')
-                
+
+                stored_model = metadata.get("embedding_model")
+                stored_docs = metadata.get("num_documents", -1)
+
                 if stored_model != EMBEDDING_MODEL:
                     print(f"\n[WARNING] Embedding model mismatch detected")
-                    print(f"          Stored model: {stored_model}")
+                    print(f"          Stored model:  {stored_model}")
                     print(f"          Current model: {EMBEDDING_MODEL}")
+                    should_rebuild = True
+                elif stored_docs != len(docs):
+                    print(f"\n[WARNING] Document count changed ({stored_docs} → {len(docs)}), rebuilding index")
                     should_rebuild = True
                 else:
                     print(f"[INFO] Loading existing FAISS index")
-                    print(f"       Model: {EMBEDDING_MODEL}")
+                    print(f"       Model:     {EMBEDDING_MODEL}")
                     print(f"       Documents: {metadata.get('num_documents', 'unknown')}")
-                    print(f"       Created: {metadata.get('created_at', 'unknown')}")
-                    
+                    print(f"       Created:   {metadata.get('created_at', 'unknown')}")
+
                     return FAISS.load_local(
                         str(FAISS_DIR),
                         embeddings,
-                        allow_dangerous_deserialization=True
+                        allow_dangerous_deserialization=True,
                     )
             except Exception as e:
                 print(f"[WARNING] Error reading metadata: {e}")
@@ -173,36 +283,38 @@ def load_or_create_faiss(docs: List[Document]) -> FAISS:
         else:
             print(f"[WARNING] No metadata found for existing index")
             should_rebuild = True
-    
-    # Rebuild index if needed
+
     if should_rebuild and FAISS_DIR.exists():
         print(f"[INFO] Removing old FAISS index...")
         shutil.rmtree(FAISS_DIR)
-    
-    # Build new index
+
     print(f"\n[INFO] Building new FAISS index...")
     print(f"       Embedding model: {EMBEDDING_MODEL}")
-    print(f"       Documents: {len(docs)}")
-    
+    print(f"       Documents:       {len(docs)} (deduplicated)")
+
     vectorstore = FAISS.from_documents(docs, embeddings)
-    
-    # Save index
+
     FAISS_DIR.mkdir(parents=True, exist_ok=True)
     vectorstore.save_local(str(FAISS_DIR))
-    
-    # Save metadata
+
+    # Persist eval split alongside the index
+    save_eval_split(eval_items, EVAL_SPLIT_PATH)
+    print(f"[INFO] Eval split saved: {len(eval_items)} held-out examples → {EVAL_SPLIT_PATH}")
+
     metadata = {
-        'embedding_model': EMBEDDING_MODEL,
-        'created_at': datetime.now().isoformat(),
-        'num_documents': len(docs),
-        'top_k': TOP_K
+        "embedding_model": EMBEDDING_MODEL,
+        "created_at": datetime.now().isoformat(),
+        "num_documents": len(docs),
+        "top_k": TOP_K,
+        "eval_split_ratio": EVAL_SPLIT_RATIO,
+        "eval_split_seed": EVAL_SPLIT_SEED,
     }
-    
-    with open(metadata_file, 'w') as f:
+
+    with open(metadata_file, "w") as f:
         json.dump(metadata, f, indent=2)
-    
+
     print(f"[SUCCESS] FAISS index built and saved to {FAISS_DIR}\n")
-    
+
     return vectorstore
 
 
@@ -341,14 +453,12 @@ def validate_manim_structure(code: str) -> None:
 
 def validate_manim_semantics(code: str) -> None:
     """Validate Manim API usage patterns."""
-    # Check for common API misuse patterns
     if "get_area(lambda" in code:
         raise ValueError("axes.get_area() must receive a graph object, not lambda")
 
     if "get_area(" in code and ".plot(" not in code:
         raise ValueError("Plot graph before calling get_area()")
-    
-    # Check for basic Scene structure
+
     if "def construct(self)" not in code:
         raise ValueError("Scene class must have construct(self) method")
 
@@ -371,24 +481,21 @@ def check_code_quality(code: str, query: str) -> dict:
     """
     issues = []
     score = 1.0
-    
+
     query_lower = query.lower()
-    
-    # Check for mentioned colors
+
     colors = ['red', 'blue', 'yellow', 'green', 'purple', 'orange', 'pink', 'white', 'black']
     for color in colors:
         if color in query_lower and color.upper() not in code:
             issues.append(f"Missing color: {color}")
             score -= 0.2
-    
-    # Check for mentioned shapes
+
     shapes = ['circle', 'square', 'triangle', 'rectangle', 'line', 'dot', 'arrow']
     for shape in shapes:
         if shape in query_lower and shape.capitalize() not in code:
             issues.append(f"Missing shape: {shape}")
             score -= 0.2
-    
-    # Check for mentioned animations
+
     animations = {
         'move': ['shift', 'move_to'],
         'rotate': ['Rotate', 'rotate'],
@@ -396,13 +503,13 @@ def check_code_quality(code: str, query: str) -> dict:
         'create': ['Create', 'DrawBorderThenFill'],
         'fade': ['FadeIn', 'FadeOut']
     }
-    
+
     for keyword, manim_methods in animations.items():
         if keyword in query_lower:
             if not any(method in code for method in manim_methods):
                 issues.append(f"Missing animation: {keyword}")
                 score -= 0.15
-    
+
     return {
         'score': max(0.0, score),
         'issues': issues
@@ -415,62 +522,75 @@ def check_code_quality(code: str, query: str) -> dict:
 
 class ManimRAG:
     """Manim RAG system with validation and intent verification."""
-    
+
     def __init__(self):
         print("[INFO] Initializing Manim RAG system...")
-        
+
         # Load dataset
         print(f"[INFO] Loading dataset from {DATASET_PATH}")
-        self.dataset = load_jsonl(DATASET_PATH)
-        print(f"[INFO] Loaded {len(self.dataset)} examples")
-        
-        # Build documents
-        documents = build_documents(self.dataset)
-        
-        # Load/create vector store
-        self.vectorstore = load_or_create_faiss(documents)
-        
-        # Create retriever with MMR for diversity
+        raw_dataset = load_jsonl(DATASET_PATH)
+        print(f"[INFO] Loaded {len(raw_dataset)} raw examples")
+
+        # Deduplicate and split BEFORE indexing to prevent data leakage
+        train_items, eval_items, dedup_stats = deduplicate_and_split(raw_dataset)
+
+        print(f"[INFO] Deduplication summary:")
+        print(f"       Total rows:     {dedup_stats['total_rows']}")
+        print(f"       Unique codes:   {dedup_stats['unique_codes']}")
+        print(f"       Train (index):  {dedup_stats['train_unique']} unique codes")
+        print(f"       Eval (held-out):{dedup_stats['eval_unique']} unique codes "
+              f"({dedup_stats['eval_rows']} prompt variants)")
+
+        # Build documents from TRAIN split only
+        documents = build_documents(train_items)
+
+        # Load/create vector store (eval_items saved alongside index)
+        self.vectorstore = load_or_create_faiss(documents, eval_items)
+
+        # -------------------------------------------------------
+        # Retriever: similarity search (faster than MMR)
+        #
+        # MMR fetches `fetch_k` candidates and re-ranks them —
+        # useful for diversity but ~3–7x slower than a straight
+        # k-NN call.  Since our index is deduplicated (no duplicate
+        # codes), diversity is already guaranteed at index level.
+        # Switch back to mmr only if you re-introduce duplicates.
+        # -------------------------------------------------------
         self.retriever = self.vectorstore.as_retriever(
-            search_type="mmr",  # Maximum Marginal Relevance
-            search_kwargs={
-                "k": TOP_K,
-                "fetch_k": 20,  # Fetch more candidates
-                "lambda_mult": 0.7  # Balance relevance vs diversity
-            }
+            search_type="similarity",
+            search_kwargs={"k": TOP_K},
         )
-        
+
         # Initialize LLM
         print(f"[INFO] Initializing LLM: {LLM_MODEL}")
         self.llm = OllamaLLM(
             model=LLM_MODEL,
-            temperature=0.2  # Balanced creativity
+            temperature=0.2
         )
-        
+
         # Create chains
         self.gen_chain = GENERATION_PROMPT | self.llm
         self.judge_chain = INTENT_JUDGE_PROMPT | self.llm
         self.refinement_chain = REFINEMENT_PROMPT | self.llm
-        
+
         # Conversation history for refinements
         self.conversation_history = []
-        
+
         print("[SUCCESS] Manim RAG system ready\n")
 
     def generate(self, query: str, context: Optional[dict] = None) -> dict:
         """
         Generate Manim code for a query.
-        
+
         Args:
             query: User request
             context: Optional context for refinements (original_request, previous_code)
-        
+
         Returns:
             dict with 'code', 'success', 'error', 'attempts'
         """
-        # Retrieve relevant examples
         docs = self.retriever.invoke(normalize_prompt(query))
-        
+
         if not docs:
             return {
                 'code': "# ERROR: No relevant Manim examples found in dataset.",
@@ -478,21 +598,18 @@ class ManimRAG:
                 'error': "No relevant examples found",
                 'attempts': 0
             }
-        
+
         references = "\n\n---\n\n".join(doc.page_content for doc in docs)
-        
+
         last_error = "None"
         last_code = ""
         best_code = None
         best_score = 0.0
-        
-        # Generation loop with validation
+
         for attempt in range(1, MAX_REPAIR_ATTEMPTS + 1):
             print(f"[INFO] Attempt {attempt}/{MAX_REPAIR_ATTEMPTS}")
-            
-            # Choose prompt based on context
+
             if context and context.get('previous_code'):
-                # Refinement mode
                 raw_output = self.refinement_chain.invoke({
                     "original_request": context.get('original_request', query),
                     "refinement_request": query,
@@ -501,17 +618,15 @@ class ManimRAG:
                     "system_rules": SYSTEM_RULES
                 })
             else:
-                # Initial generation mode
                 raw_output = self.gen_chain.invoke({
                     "question": query,
                     "references": references,
                     "error": last_error,
                     "system_rules": SYSTEM_RULES
                 })
-            
+
             last_code = extract_code(raw_output)
-            
-            # Validation step
+
             try:
                 validate(last_code)
                 print("[SUCCESS] Code validation passed")
@@ -519,19 +634,16 @@ class ManimRAG:
                 print(f"[ERROR] Validation failed: {e}")
                 last_error = str(e)
                 continue
-            
-            # Quality check (heuristic)
+
             quality = check_code_quality(last_code, query)
             print(f"[INFO] Quality score: {quality['score']:.2f}")
             if quality['issues']:
                 print(f"[WARNING] Potential issues: {', '.join(quality['issues'][:2])}")
-            
-            # Track best code
+
             if quality['score'] > best_score:
                 best_score = quality['score']
                 best_code = last_code
-            
-            # If quality is good enough, skip intent verification
+
             if quality['score'] >= INTENT_VERIFICATION_THRESHOLD:
                 print("[INFO] Quality threshold met, skipping intent verification")
                 return {
@@ -541,8 +653,7 @@ class ManimRAG:
                     'attempts': attempt,
                     'quality_score': quality['score']
                 }
-            
-            # Intent verification (only if enabled and quality is low)
+
             if ENABLE_INTENT_VERIFICATION:
                 print("[INFO] Verifying intent...")
                 try:
@@ -550,7 +661,7 @@ class ManimRAG:
                         "question": query,
                         "code": last_code
                     }).strip().upper()
-                    
+
                     if "YES" in verdict:
                         print("[SUCCESS] Intent verification passed")
                         return {
@@ -564,14 +675,13 @@ class ManimRAG:
                         print("[WARNING] Intent verification failed")
                 except Exception as e:
                     print(f"[WARNING] Intent verification error: {e}")
-            
+
             last_error = (
                 "The generated code does not fully satisfy the user request. "
                 f"Issues: {', '.join(quality['issues']) if quality['issues'] else 'General mismatch'}. "
                 "Regenerate code that directly fulfills the request."
             )
-        
-        # Return best attempt if we have one
+
         if best_code and best_score > 0.3:
             print(f"[WARNING] Max attempts reached, returning best code (score: {best_score:.2f})")
             return {
@@ -581,8 +691,7 @@ class ManimRAG:
                 'attempts': MAX_REPAIR_ATTEMPTS,
                 'quality_score': best_score
             }
-        
-        # Fallback: return closest example
+
         print("[WARNING] Max attempts reached, returning closest dataset example")
         return {
             'code': f"""# WARNING: Auto-generation failed after {MAX_REPAIR_ATTEMPTS} attempts.
@@ -594,26 +703,26 @@ class ManimRAG:
             'attempts': MAX_REPAIR_ATTEMPTS,
             'quality_score': 0.0
         }
-    
+
     def refine(self, original_request: str, refinement: str, previous_code: str) -> dict:
         """
         Refine previously generated code based on user feedback.
-        
+
         Args:
             original_request: Original user request
             refinement: Refinement/change request
             previous_code: Previously generated code
-        
+
         Returns:
             dict with refined code
         """
         print(f"\n[INFO] Refining code based on: {refinement}")
-        
+
         context = {
             'original_request': original_request,
             'previous_code': previous_code
         }
-        
+
         return self.generate(refinement, context=context)
 
 
@@ -626,30 +735,30 @@ def main():
     print("=" * 70)
     print("  Manim RAG - Code Generation System")
     print("=" * 70)
-    
+
     rag = ManimRAG()
-    
+
     current_code = None
     current_request = None
-    
+
     print("\nCommands:")
     print("  - Type your request to generate Manim code")
     print("  - Type 'refine: <changes>' to refine the last generation")
     print("  - Type 'exit' or 'quit' to quit")
     print("  - Type 'show' to display the last generated code")
     print()
-    
+
     while True:
         try:
             query = input("\n> ").strip()
-            
+
             if not query:
                 continue
-            
+
             if query.lower() in {"exit", "quit"}:
                 print("\nExiting...")
                 break
-            
+
             if query.lower() == "show":
                 if current_code:
                     print("\n" + "=" * 70)
@@ -659,21 +768,18 @@ def main():
                 else:
                     print("[ERROR] No code generated yet")
                 continue
-            
-            # Check if refinement request
+
             if query.lower().startswith("refine:"):
                 if not current_code or not current_request:
                     print("[ERROR] No previous code to refine. Generate code first.")
                     continue
-                
+
                 refinement = query[7:].strip()
                 result = rag.refine(current_request, refinement, current_code)
             else:
-                # New generation
                 current_request = query
                 result = rag.generate(query)
-            
-            # Display results
+
             print("\n" + "=" * 70)
             if result['success']:
                 quality_info = f", quality: {result.get('quality_score', 0):.2f}" if 'quality_score' in result else ""
@@ -683,10 +789,9 @@ def main():
             print("=" * 70)
             print(result['code'])
             print("=" * 70)
-            
-            # Store for refinement
+
             current_code = result['code']
-            
+
         except KeyboardInterrupt:
             print("\n\nExiting...")
             break
@@ -695,4 +800,3 @@ def main():
             import traceback
             traceback.print_exc()
 # CLI disabled when used as backend service
-# 

@@ -12,4 +12,3 @@ if url is None or key is None:
 
 supabase = create_client(url, key)
 
-        

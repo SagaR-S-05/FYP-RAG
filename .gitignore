@@ -8,3 +8,5 @@ test_render/
 .vscode
 uv.lock
 .env 
+.embedding_cache/
+__pycache__/
