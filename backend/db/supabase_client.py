@@ -12,3 +12,5 @@ if url is None or key is None:
 
 supabase = create_client(url, key)
 
+print("SUPABASE_URL:", url)
+print("SUPABASE_KEY loaded:", key is not None)

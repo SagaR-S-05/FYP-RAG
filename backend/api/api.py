@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import shutil
-import uuid 
+import uuid
 
 from backend.pipeline.rag_pipeline import ManimRAG
 from backend.db.crud import save_prompt, save_generated_code, save_video
@@ -70,7 +70,7 @@ def sanitize_code(code: str):
 
 
 # =========================
-# ENDPOINT
+# GENERATE ENDPOINT
 # =========================
 
 @router.post("/generate", response_model=GenerateResponse)
@@ -83,18 +83,24 @@ def generate(req: GenerateRequest):
         )
 
     prompt = req.prompt.strip()
+
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt cannot be empty")
 
-    # 1 store prompt in DB
+    # Store prompt in DB
     prompt_id = save_prompt(prompt)
 
     job_id = str(uuid.uuid4())
+
     work_dir = Path(tempfile.mkdtemp(prefix="manim_job_"))
     output_dir = work_dir / "output"
     output_dir.mkdir()
 
     try:
+
+        # =========================
+        # 1 Generate Manim Code
+        # =========================
 
         result = rag.generate(prompt)
 
@@ -103,10 +109,16 @@ def generate(req: GenerateRequest):
         attempts = result.get("attempts", 0)
         quality_score = result.get("quality_score", 0.0)
 
-        if not success:
-            return {"status": "failure", "error": "code generation failed"}
+        if not success or not code:
+            return {
+                "status": "failure",
+                "error": "code generation failed"
+            }
 
-        # 2 save generated code
+        # =========================
+        # 2 Save Generated Code
+        # =========================
+
         save_generated_code(prompt_id, code)
 
         sanitize_code(code)
@@ -114,53 +126,73 @@ def generate(req: GenerateRequest):
         scene_file = work_dir / "scene.py"
         scene_file.write_text(code, encoding="utf-8")
 
-        # docker_cmd = [
-        #     "docker", "run", "--rm",
-        #     "--network", "none",
-        #     "--cpus", "1",
-        #     "--memory", "2g",
-        #     "-v", f"{scene_file}:/app/scene.py:ro",
-        #     "-v", f"{output_dir}:/output",
-        #     "manim-sandbox:latest"
-        # ]
+        # =========================
+        # 3 Run Docker Sandbox
+        # =========================
 
-        # subprocess.run(
-        #     docker_cmd,
-        #     timeout=120,
-        #     check=False,
-        #     capture_output=True,
-        #     text=True
-        # )
-        
-        # TEMPORARY: Skip Docker rendering
-        video_url = None
-        
-        # Store generated code in DB
-        save_generated_code(prompt_id, code)
-        
-        return {
-            "status": "success",
-            "video_url": None,
-            "code": code,
-            "attempts": attempts,
-            "quality_score": quality_score
-        }
+        docker_cmd = [
+            "docker", "run", "--rm",
+            "--network", "none",
+            "--cpus", "1",
+            "--memory", "2g",
+            "-v", f"{scene_file}:/app/scene.py:ro",
+            "-v", f"{output_dir}:/output",
+            "manim-sandbox"
+        ]
+
+        result_proc = subprocess.run(
+            docker_cmd,
+            timeout=120,
+            check=False,
+            capture_output=True,
+            text=True
+        )
+
+        # =========================
+        # 4 Check Render Result
+        # =========================
 
         video_path = output_dir / "video.mp4"
 
         if not video_path.exists():
-            return {"status": "failure", "error": "render failed"}
+
+            log_file = output_dir / "render.log"
+
+            logs = ""
+
+            if log_file.exists():
+                logs = log_file.read_text()
+            else:
+                logs = result_proc.stderr
+
+            return {
+                "status": "failure",
+                "error": logs,
+                "code": code
+            }
+
+        # =========================
+        # 5 Move Video to Public Dir
+        # =========================
 
         public_dir = Path("rendered_videos")
         public_dir.mkdir(exist_ok=True)
 
         final_path = public_dir / f"{job_id}.mp4"
+
         shutil.move(video_path, final_path)
 
         video_url = f"/rendered_videos/{final_path.name}"
 
-        # 3 save video url
+        # =========================
+        # 6 Save Video URL in DB
+        # =========================
+
         save_video(prompt_id, video_url)
+
+        # =========================
+        # 7 Cleanup Temp Folder
+        # =========================
 
         shutil.rmtree(work_dir, ignore_errors=True)
 
@@ -172,7 +204,15 @@ def generate(req: GenerateRequest):
             "quality_score": quality_score
         }
 
+    except subprocess.TimeoutExpired:
+
+        return {
+            "status": "failure",
+            "error": "Rendering timed out"
+        }
+
     except Exception as exc:
+
         return {
             "status": "failure",
             "error": str(exc)
@@ -185,11 +225,7 @@ def generate(req: GenerateRequest):
 
 @router.get("/insight")
 def insight(prompt: str):
-    """
-    Stream a pedagogical explanation for the given animation prompt.
-    Intended to be called in parallel with /generate from the client.
-    Returns a plain-text stream via Server-Sent Events (SSE).
-    """
+
     if not prompt.strip():
         raise HTTPException(status_code=400, detail="prompt cannot be empty")
 
