@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { ArrowUp } from "lucide-react";
 import { useSessions } from "../sessionContext.jsx";
+import { isSupabaseConfigured, supabase } from "../lib/supabase";
 
 const stages = [
   { name: "Analyzing Prompt", duration: 5000 },
@@ -23,11 +24,143 @@ function buildApiUrl(path) {
 
 function resolveVideoUrl(videoUrl) {
   if (!videoUrl) return null;
-  if (/^https?:\/\//i.test(videoUrl)) return videoUrl;
-  if (API_BASE_URL) {
-    return `${API_BASE_URL}${videoUrl.startsWith("/") ? videoUrl : `/${videoUrl}`}`;
+  let normalized = String(videoUrl).trim().replace(/\\/g, "/");
+
+  if (/^https?:\/\//i.test(normalized)) return normalized;
+
+  const lower = normalized.toLowerCase();
+  const renderedIndex = lower.lastIndexOf("rendered_videos/");
+  if (renderedIndex >= 0) {
+    normalized = `/${normalized.slice(renderedIndex)}`;
+  } else if (/^[^/]+\.mp4$/i.test(normalized)) {
+    normalized = `/rendered_videos/${normalized}`;
+  } else {
+    normalized = normalized.startsWith("/") ? normalized : `/${normalized}`;
   }
-  return videoUrl;
+
+  if (normalized.startsWith("/api/rendered_videos/")) {
+    normalized = normalized.replace(/^\/api/, "");
+  }
+
+  if (API_BASE_URL) {
+    return `${API_BASE_URL}${normalized}`;
+  }
+
+  return normalized;
+}
+
+function buildVideoCandidates(videoPath, dbVideoId = null, dbPromptId = null) {
+  if (!videoPath && !dbVideoId && !dbPromptId) return [];
+
+  const raw = String(videoPath || "").trim().replace(/\\/g, "/");
+  if (raw && /^https?:\/\//i.test(raw)) return [raw];
+
+  const clean = raw ? raw.split("?")[0].split("#")[0] : "";
+  const fileName = clean.split("/").filter(Boolean).pop() || "";
+
+  let relativePath = clean;
+  const renderedIndex = clean
+    ? clean.toLowerCase().lastIndexOf("rendered_videos/")
+    : -1;
+  if (renderedIndex >= 0 && clean) {
+    relativePath = `/${clean.slice(renderedIndex)}`;
+  } else if (clean && /^[^/]+\.mp4$/i.test(clean)) {
+    relativePath = `/rendered_videos/${clean}`;
+  } else {
+    relativePath = clean.startsWith("/") ? clean : `/${clean}`;
+  }
+
+  if (relativePath.startsWith("/api/rendered_videos/")) {
+    relativePath = relativePath.replace(/^\/api/, "");
+  }
+
+  const renderedPathFromFile = fileName
+    ? `/rendered_videos/${fileName}`
+    : null;
+
+  const candidates = [
+    clean ? resolveVideoUrl(relativePath) : null,
+    renderedPathFromFile ? resolveVideoUrl(renderedPathFromFile) : null,
+    dbVideoId ? resolveVideoUrl(`/rendered_videos/${dbVideoId}.mp4`) : null,
+    dbPromptId ? resolveVideoUrl(`/rendered_videos/${dbPromptId}.mp4`) : null,
+    clean && API_BASE_URL ? `${API_BASE_URL}${relativePath}` : null,
+    API_BASE_URL && renderedPathFromFile
+      ? `${API_BASE_URL}${renderedPathFromFile}`
+      : null,
+    API_BASE_URL && dbVideoId
+      ? `${API_BASE_URL}/rendered_videos/${dbVideoId}.mp4`
+      : null,
+    API_BASE_URL && dbPromptId
+      ? `${API_BASE_URL}/rendered_videos/${dbPromptId}.mp4`
+      : null,
+  ].filter(Boolean);
+
+  return [...new Set(candidates)];
+}
+
+async function canLoadVideoUrl(url) {
+  try {
+    const head = await fetch(url, { method: "HEAD" });
+    if (head.ok) return true;
+
+    if (head.status === 405) {
+      const probe = await fetch(url, {
+        method: "GET",
+        headers: { Range: "bytes=0-1" },
+      });
+      return probe.ok || probe.status === 206;
+    }
+  } catch (_) {
+    return false;
+  }
+
+  return false;
+}
+
+async function findLoadableVideoUrl(videoPath, dbVideoId = null, dbPromptId = null) {
+  const candidates = buildVideoCandidates(videoPath, dbVideoId, dbPromptId);
+
+  for (const candidate of candidates) {
+    const ok = await canLoadVideoUrl(candidate);
+    if (ok) return candidate;
+  }
+
+  return candidates[0] || null;
+}
+
+async function fetchVideoFromDb(promptText) {
+  if (!isSupabaseConfigured || !supabase) return null;
+
+  const { data, error } = await supabase
+    .from("videos")
+    .select(`
+      id,
+      video_url,
+      created_at,
+      prompt_id,
+      prompts (
+        prompt_text
+      )
+    `)
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  if (error || !Array.isArray(data) || data.length === 0) {
+    return null;
+  }
+
+  const normalizedPrompt = promptText.trim().toLowerCase();
+  const matchingVideo = data.find(
+    (row) => {
+      const promptRelation = Array.isArray(row?.prompts)
+        ? row.prompts[0]
+        : row?.prompts;
+      const promptValue = promptRelation?.prompt_text?.trim().toLowerCase();
+      return promptValue === normalizedPrompt;
+    }
+  );
+
+  return matchingVideo || data[0] || null;
 }
 
 export default function Chat() {
@@ -77,13 +210,33 @@ export default function Chat() {
 
       const data = await response.json().catch(() => null);
 
-      if (!response.ok || data?.status !== "success" || !data?.video_url) {
+      if (!response.ok || data?.status !== "success") {
         const backendError =
           data?.error || data?.detail || "Video generation failed.";
         throw new Error(backendError);
       }
 
-      const resolvedVideoUrl = resolveVideoUrl(data.video_url);
+      let videoPath = data?.video_url || null;
+      let dbVideoId = null;
+      let dbPromptId = null;
+
+      const dbVideo = await fetchVideoFromDb(userPrompt);
+      if (dbVideo) {
+        if (!videoPath) {
+          videoPath = dbVideo.video_url || null;
+        }
+        dbVideoId = dbVideo.id || null;
+        dbPromptId = dbVideo.prompt_id || null;
+      }
+
+      if (!videoPath) {
+        throw new Error("Video generated, but no video path was found.");
+      }
+
+      const resolvedVideoUrl = await findLoadableVideoUrl(videoPath, dbVideoId, dbPromptId);
+      if (!resolvedVideoUrl) {
+        throw new Error("Unable to load video from rendered_videos.");
+      }
       const cacheBustedUrl = `${resolvedVideoUrl}${resolvedVideoUrl.includes("?") ? "&" : "?"}t=${Date.now()}`;
 
       addMessageToActiveSession({
