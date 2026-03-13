@@ -57,21 +57,34 @@
 //     </div>
 //   );
 // }
-
-
 import { useEffect, useState } from "react";
-import { supabase } from "../supabaseClient"; // adjust path if different
+import { isSupabaseConfigured, supabase } from "../lib/supabase";
+
+const BACKEND_BASE_URL = "http://localhost:8001";
 
 export default function VideoGallery() {
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) {
+      setLoading(false);
+      return;
+    }
+
     async function fetchVideos() {
       try {
         const { data, error } = await supabase
           .from("videos")
-          .select("*")
+          .select(`
+            id,
+            video_url,
+            created_at,
+            prompt_id,
+            prompts (
+              prompt_text
+            )
+          `)
           .order("created_at", { ascending: false });
 
         if (error) {
@@ -81,7 +94,7 @@ export default function VideoGallery() {
 
         setVideos(data || []);
       } catch (err) {
-        console.error("Unexpected error fetching videos:", err);
+        console.error("Unexpected error:", err);
       } finally {
         setLoading(false);
       }
@@ -89,6 +102,19 @@ export default function VideoGallery() {
 
     fetchVideos();
   }, []);
+
+  if (!isSupabaseConfigured) {
+    return (
+      <div className="videoGalleryPage">
+        <h1 className="pageTitle">Video Gallery</h1>
+        <p className="mutedText">
+          Supabase is not configured for the frontend yet. Add
+          `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to
+          `frontend-1/.env`.
+        </p>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -99,7 +125,7 @@ export default function VideoGallery() {
     );
   }
 
-  if (!videos || videos.length === 0) {
+  if (!videos.length) {
     return (
       <div className="videoGalleryPage">
         <h1 className="pageTitle">Video Gallery</h1>
@@ -117,29 +143,38 @@ export default function VideoGallery() {
           const created = new Date(video.created_at);
           const label = created.toLocaleString();
 
+          const videoSrc = `${BACKEND_BASE_URL}${video.video_url}`;
+          const promptText = video.prompts?.prompt_text || "Prompt unavailable";
+
           return (
             <section key={video.id} className="sessionCard">
               <header className="sessionHeader">
-                <div className="sessionTitle">Video {index + 1}</div>
+                <div className="sessionTitle">
+                  Prompt {video.prompt_id}
+                </div>
                 <div className="sessionMeta">{label}</div>
               </header>
+
+              <div className="sessionPrompt">
+                {promptText}
+              </div>
 
               <div className="sessionVideos">
                 <div className="sessionVideo">
                   <video
                     className="sessionVideoPlayer"
-                    src={video.video_url}
+                    src={videoSrc}
                     controls
                   />
 
                   <div className="sessionVideoFooter">
                     <span className="sessionVideoLabel">
-                      Prompt ID: {video.prompt_id}
+                      Video {index + 1}
                     </span>
 
                     <a
                       className="downloadButton"
-                      href={video.video_url}
+                      href={videoSrc}
                       download
                     >
                       Download

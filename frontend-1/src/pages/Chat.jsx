@@ -5,10 +5,26 @@ import { useSessions } from "../sessionContext.jsx";
 const FALLBACK_VIDEO_URL =
   "D:\\Final Year Project - RAG\\FYP-RAG\\rendered_videos\\8c705372-5401-4cfa-ab1b-415c06d09081";
 
+const stages = [
+  { name: "Analyzing Prompt", duration: 5000 },
+  { name: "Generating Code", duration: 8000 },
+  { name: "Code Ready", duration: 4000 },
+  { name: "Rendering Frames", duration: 20000 },
+  { name: "Finalizing Video", duration: 8000 },
+  { name: "Complete", duration: 0 },
+];
+
 export default function Chat() {
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [isAnimating, setIsAnimating] = useState(false);
+  const [currentStageIndex, setCurrentStageIndex] = useState(-1);
+  const [stageProgress, setStageProgress] = useState(0);
+  const [stageStatus, setStageStatus] = useState(() =>
+    stages.map(() => "pending")
+  );
+  const [pendingResult, setPendingResult] = useState(null);
   const { activeSession, addMessageToActiveSession } = useSessions();
   const textareaRef = useRef(null);
 
@@ -24,6 +40,10 @@ export default function Chat() {
 
     setLoading(true);
     setError(null);
+    setIsAnimating(true);
+    setCurrentStageIndex(0);
+    setStageProgress(0);
+    setStageStatus(stages.map((_, index) => (index === 0 ? "running" : "pending")));
 
     let finalVideoUrl = null;
     let messageText = userPrompt;
@@ -60,9 +80,8 @@ export default function Chat() {
       messageText = "Fallback Video (API unavailable)";
     }
 
-    // Always render video
     const cacheBustedUrl = `${finalVideoUrl}?t=${Date.now()}`;
-    addMessageToActiveSession({ text: messageText, videoUrl: cacheBustedUrl });
+    setPendingResult({ text: messageText, videoUrl: cacheBustedUrl });
 
     setPrompt("");
     if (textareaRef.current) {
@@ -107,6 +126,212 @@ export default function Chat() {
     }
   }, [activeSession?.id]);
 
+  useEffect(() => {
+    if (!isAnimating || currentStageIndex < 0 || currentStageIndex >= stages.length) {
+      return;
+    }
+
+    const currentStage = stages[currentStageIndex];
+
+    if (currentStage.duration === 0) {
+      setStageProgress(100);
+      setStageStatus((prev) => {
+        const next = [...prev];
+        next[currentStageIndex] = "complete";
+        return next;
+      });
+      setIsAnimating(false);
+      return;
+    }
+
+    const start = Date.now();
+    const intervalMs = 100;
+
+    const id = setInterval(() => {
+      const elapsed = Date.now() - start;
+      const rawProgress = (elapsed / currentStage.duration) * 100;
+      const clamped = Math.min(100, rawProgress);
+
+      setStageProgress(clamped);
+
+      if (clamped >= 100) {
+        clearInterval(id);
+
+        setStageStatus((prev) => {
+          const next = [...prev];
+          next[currentStageIndex] = "complete";
+          if (currentStageIndex < stages.length - 1) {
+            next[currentStageIndex + 1] = "running";
+          }
+          return next;
+        });
+
+        if (currentStageIndex < stages.length - 1) {
+          setCurrentStageIndex((prevIndex) => prevIndex + 1);
+        } else {
+          setIsAnimating(false);
+        }
+      }
+    }, intervalMs);
+
+    return () => clearInterval(id);
+  }, [isAnimating, currentStageIndex]);
+
+  useEffect(() => {
+    const hasCompletedGeneration =
+      !loading &&
+      !isAnimating &&
+      pendingResult &&
+      stageStatus.every((status) => status === "complete");
+
+    if (!hasCompletedGeneration) {
+      return;
+    }
+
+    addMessageToActiveSession(pendingResult);
+    setPendingResult(null);
+    setCurrentStageIndex(-1);
+    setStageProgress(0);
+    setStageStatus(stages.map(() => "pending"));
+  }, [addMessageToActiveSession, isAnimating, loading, pendingResult, stageStatus]);
+
+  const renderStageProgress = () => {
+    const hasAnyProgress = stageStatus.some((status) => status !== "pending");
+
+    if (!hasAnyProgress) {
+      return null;
+    }
+
+    return (
+      <div
+        style={{
+          marginTop: "1.5rem",
+          padding: "1rem",
+          borderRadius: "0.75rem",
+          backgroundColor: "var(--card)",
+          border: "1px solid var(--border)",
+          boxShadow: "0 0 0 1px var(--ring)",
+        }}
+      >
+        <div
+          style={{
+            fontSize: "0.9rem",
+            fontWeight: 500,
+            marginBottom: "0.75rem",
+            color: "var(--foreground)",
+          }}
+        >
+          Animation progress
+        </div>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.75rem",
+          }}
+        >
+          {stages.map((stage, index) => {
+            const status = stageStatus[index];
+            const isCurrent = index === currentStageIndex;
+            const progressValue =
+              status === "complete"
+                ? 100
+                : isCurrent
+                ? stageProgress
+                : 0;
+
+            const circleBackground =
+              status === "complete"
+                ? "var(--primary)"
+                : progressValue > 0
+                ? `conic-gradient(var(--primary) ${progressValue}%, var(--border) ${progressValue}% 100%)`
+                : "var(--card)";
+
+            const circleBorder =
+              status === "pending" && progressValue === 0
+                ? "1px solid var(--border)"
+                : "none";
+
+            return (
+              <div
+                key={stage.name}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.75rem",
+                }}
+              >
+                <div
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: "999px",
+                    background: circleBackground,
+                    border: circleBorder,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color:
+                      status === "complete"
+                        ? "var(--primary-foreground)"
+                        : "var(--foreground)",
+                    fontSize: 12,
+                    fontWeight: 500,
+                    transition: "background 0.2s linear",
+                  }}
+                >
+                  {status === "complete" ? "✓" : `${Math.round(progressValue)}%`}
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                    flex: 1,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: "0.9rem",
+                      fontWeight: 500,
+                      color: "var(--foreground)",
+                    }}
+                  >
+                    {stage.name}
+                  </div>
+                  <div
+                    style={{
+                      position: "relative",
+                      width: "100%",
+                      height: 4,
+                      borderRadius: 999,
+                      backgroundColor: "var(--border)",
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: `${progressValue}%`,
+                        backgroundColor: "var(--primary)",
+                        transition: "width 0.1s linear",
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  const isSubmitDisabled = loading || isAnimating || !prompt.trim();
+
   return (
     <div className="chatPage">
       <div className="chatContainer">
@@ -133,6 +358,7 @@ export default function Chat() {
                 onSubmit={handleSubmit}
                 style={{ marginTop: "1rem" }}
               >
+                {renderStageProgress()}
                 <div
                   className="inputWrapper"
                   style={{ display: "flex", justifyContent: "center" }}
@@ -155,7 +381,7 @@ export default function Chat() {
                       onChange={(e) => setPrompt(e.target.value)}
                       placeholder="Enter your prompt here..."
                       rows={1}
-                      disabled={loading}
+                      disabled={loading || isAnimating}
                       style={{
                         width: "100%",
                         paddingRight: 56,
@@ -169,7 +395,7 @@ export default function Chat() {
                     <button
                       type="submit"
                       aria-label="Send prompt"
-                      disabled={loading || !prompt.trim()}
+                      disabled={isSubmitDisabled}
                       style={{
                         position: "absolute",
                         right: 8,
@@ -185,8 +411,8 @@ export default function Chat() {
                         alignItems: "center",
                         justifyContent: "center",
                         cursor:
-                          loading || !prompt.trim() ? "not-allowed" : "pointer",
-                        opacity: loading || !prompt.trim() ? 0.6 : 1,
+                          isSubmitDisabled ? "not-allowed" : "pointer",
+                        opacity: isSubmitDisabled ? 0.6 : 1,
                       }}
                     >
                       <ArrowUp size={18} />
@@ -203,7 +429,7 @@ export default function Chat() {
                 <div className="welcomeMessage">{welcomeMessage}</div>
               )}
 
-              {videos.length > 0 && (
+              {!isAnimating && videos.length > 0 && (
                 <div className="videoList">
                   {videos.map((url, index) => (
                     <div
@@ -232,6 +458,7 @@ export default function Chat() {
             </div>
 
             <form className="chatForm" onSubmit={handleSubmit}>
+              {renderStageProgress()}
               <div className="inputWrapper">
                 <div
                   style={{
@@ -251,7 +478,7 @@ export default function Chat() {
                     onChange={(e) => setPrompt(e.target.value)}
                     placeholder="Enter your prompt here..."
                     rows={1}
-                    disabled={loading}
+                    disabled={loading || isAnimating}
                     style={{
                       width: "100%",
                       paddingRight: 56,
@@ -265,7 +492,7 @@ export default function Chat() {
                   <button
                     type="submit"
                     aria-label="Send prompt"
-                    disabled={loading || !prompt.trim()}
+                    disabled={isSubmitDisabled}
                     style={{
                       position: "absolute",
                       right: 8,
@@ -281,8 +508,8 @@ export default function Chat() {
                       alignItems: "center",
                       justifyContent: "center",
                       cursor:
-                        loading || !prompt.trim() ? "not-allowed" : "pointer",
-                      opacity: loading || !prompt.trim() ? 0.6 : 1,
+                        isSubmitDisabled ? "not-allowed" : "pointer",
+                      opacity: isSubmitDisabled ? 0.6 : 1,
                     }}
                   >
                     <ArrowUp size={18} />
