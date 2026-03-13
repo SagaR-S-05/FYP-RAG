@@ -2,9 +2,6 @@ import { useState, useRef, useEffect } from "react";
 import { ArrowUp } from "lucide-react";
 import { useSessions } from "../sessionContext.jsx";
 
-const FALLBACK_VIDEO_URL =
-  "D:\\Final Year Project - RAG\\FYP-RAG\\rendered_videos\\8c705372-5401-4cfa-ab1b-415c06d09081";
-
 const stages = [
   { name: "Analyzing Prompt", duration: 5000 },
   { name: "Generating Code", duration: 8000 },
@@ -13,6 +10,25 @@ const stages = [
   { name: "Finalizing Video", duration: 8000 },
   { name: "Complete", duration: 0 },
 ];
+
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+
+function buildApiUrl(path) {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  if (API_BASE_URL) {
+    return `${API_BASE_URL}${normalizedPath}`;
+  }
+  return `/api${normalizedPath}`;
+}
+
+function resolveVideoUrl(videoUrl) {
+  if (!videoUrl) return null;
+  if (/^https?:\/\//i.test(videoUrl)) return videoUrl;
+  if (API_BASE_URL) {
+    return `${API_BASE_URL}${videoUrl.startsWith("/") ? videoUrl : `/${videoUrl}`}`;
+  }
+  return videoUrl;
+}
 
 export default function Chat() {
   const [prompt, setPrompt] = useState("");
@@ -24,9 +40,9 @@ export default function Chat() {
   const [stageStatus, setStageStatus] = useState(() =>
     stages.map(() => "pending")
   );
-  const [pendingResult, setPendingResult] = useState(null);
   const { activeSession, addMessageToActiveSession } = useSessions();
   const textareaRef = useRef(null);
+  const messagesEndRef = useRef(null);
 
   // Determine if the current session has zero messages
   const isEmptySession =
@@ -38,6 +54,11 @@ export default function Chat() {
     const userPrompt = prompt.trim();
     if (!userPrompt || !activeSession) return;
 
+    addMessageToActiveSession({
+      role: "user",
+      text: userPrompt,
+    });
+
     setLoading(true);
     setError(null);
     setIsAnimating(true);
@@ -45,12 +66,8 @@ export default function Chat() {
     setStageProgress(0);
     setStageStatus(stages.map((_, index) => (index === 0 ? "running" : "pending")));
 
-    let finalVideoUrl = null;
-    let messageText = userPrompt;
-
     try {
-      // Try API
-      const response = await fetch("/api/generate", {
+      const response = await fetch(buildApiUrl("/generate"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -58,41 +75,46 @@ export default function Chat() {
         body: JSON.stringify({ prompt: userPrompt }),
       });
 
-      let data = null;
-      try {
-        data = await response.json();
-      } catch (e) {
-        // JSON parse failed - will use fallback
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok || data?.status !== "success" || !data?.video_url) {
+        const backendError =
+          data?.error || data?.detail || "Video generation failed.";
+        throw new Error(backendError);
       }
 
-      // Check for success
-      if (response.ok && data?.videoUrl) {
-        finalVideoUrl = data.videoUrl;
-      } else {
-        // API failed or no video_url - use fallback
-        finalVideoUrl = FALLBACK_VIDEO_URL;
-        messageText = "Fallback Video (API unavailable)";
-      }
+      const resolvedVideoUrl = resolveVideoUrl(data.video_url);
+      const cacheBustedUrl = `${resolvedVideoUrl}${resolvedVideoUrl.includes("?") ? "&" : "?"}t=${Date.now()}`;
+
+      addMessageToActiveSession({
+        role: "assistant",
+        text: "Your animation is ready.",
+        videoUrl: cacheBustedUrl,
+      });
     } catch (err) {
-      // Network error or other exception - use fallback immediately
-      console.error("API error:", err.message);
-      finalVideoUrl = FALLBACK_VIDEO_URL;
-      messageText = "Fallback Video (API unavailable)";
+      const message = err instanceof Error ? err.message : "Something went wrong.";
+      console.error("API error:", message);
+      setError(message);
+      addMessageToActiveSession({
+        role: "assistant",
+        text: message,
+        error: true,
+      });
+    } finally {
+      setPrompt("");
+      if (textareaRef.current) {
+        textareaRef.current.style.height = "auto";
+        textareaRef.current.style.overflowY = "hidden";
+      }
+
+      setLoading(false);
+      setIsAnimating(false);
+      setCurrentStageIndex(-1);
+      setStageProgress(0);
+      setStageStatus(stages.map(() => "pending"));
     }
-
-    const cacheBustedUrl = `${finalVideoUrl}?t=${Date.now()}`;
-    setPendingResult({ text: messageText, videoUrl: cacheBustedUrl });
-
-    setPrompt("");
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
-      textareaRef.current.style.overflowY = "hidden";
-    }
-
-    setLoading(false);
   };
 
-  const videos = activeSession?.videos ?? [];
   const welcomeMessage = activeSession?.welcomeMessage;
 
   // Auto-resize textarea: grow from 1 to 4 lines, then enable scroll
@@ -125,6 +147,10 @@ export default function Chat() {
       textareaRef.current.style.overflowY = "hidden";
     }
   }, [activeSession?.id]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [activeSession?.messages, isAnimating, error]);
 
   useEffect(() => {
     if (!isAnimating || currentStageIndex < 0 || currentStageIndex >= stages.length) {
@@ -177,26 +203,8 @@ export default function Chat() {
     return () => clearInterval(id);
   }, [isAnimating, currentStageIndex]);
 
-  useEffect(() => {
-    const hasCompletedGeneration =
-      !loading &&
-      !isAnimating &&
-      pendingResult &&
-      stageStatus.every((status) => status === "complete");
-
-    if (!hasCompletedGeneration) {
-      return;
-    }
-
-    addMessageToActiveSession(pendingResult);
-    setPendingResult(null);
-    setCurrentStageIndex(-1);
-    setStageProgress(0);
-    setStageStatus(stages.map(() => "pending"));
-  }, [addMessageToActiveSession, isAnimating, loading, pendingResult, stageStatus]);
-
   const renderStageProgress = () => {
-    const hasAnyProgress = stageStatus.some((status) => status !== "pending");
+    const hasAnyProgress = isAnimating && stageStatus.some((status) => status !== "pending");
 
     if (!hasAnyProgress) {
       return null;
@@ -330,6 +338,33 @@ export default function Chat() {
     );
   };
 
+  const renderMessage = (message) => {
+    const isUser = message.role === "user";
+    const messageClassName = isUser
+      ? "chatBubble chatBubbleUser"
+      : message.error
+      ? "chatBubble chatBubbleError"
+      : "chatBubble chatBubbleAssistant";
+
+    return (
+      <div key={message.id} className={messageClassName}>
+        {message.text && <div className="chatMessageText">{message.text}</div>}
+        {message.videoUrl && (
+          <div className="videoContainer chatMessageVideo">
+            <video
+              className="generatedVideo"
+              controls
+              autoPlay
+              src={message.videoUrl}
+            >
+              Your browser does not support the video tag.
+            </video>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const isSubmitDisabled = loading || isAnimating || !prompt.trim();
 
   return (
@@ -429,36 +464,14 @@ export default function Chat() {
                 <div className="welcomeMessage">{welcomeMessage}</div>
               )}
 
-              {!isAnimating && videos.length > 0 && (
-                <div className="videoList">
-                  {videos.map((url, index) => (
-                    <div
-                      key={`${activeSession.id}-video-${index}`}
-                      className="videoContainer"
-                    >
-                      <video
-                        key={url}
-                        className="generatedVideo"
-                        controls
-                        autoPlay={index === videos.length - 1}
-                      >
-                        <source src={url} type="video/mp4" />
-                        Your browser does not support the video tag.
-                      </video>
-                    </div>
-                  ))}
-                </div>
-              )}
+              {activeSession?.messages?.map(renderMessage)}
 
-              {error && (
-                <div className="errorMessage" role="alert">
-                  {error}
-                </div>
-              )}
+              {renderStageProgress()}
+
+              <div ref={messagesEndRef} />
             </div>
 
             <form className="chatForm" onSubmit={handleSubmit}>
-              {renderStageProgress()}
               <div className="inputWrapper">
                 <div
                   style={{

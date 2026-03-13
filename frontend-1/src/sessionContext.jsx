@@ -68,6 +68,19 @@ function createSession() {
   };
 }
 
+function normalizeMessage(input, session) {
+  const role = input.role ?? "assistant";
+  const text = input.text ?? "";
+
+  return {
+    id: input.id ?? `${session.id}-${session.messages.length + 1}`,
+    role,
+    text,
+    videoUrl: input.videoUrl ?? null,
+    error: Boolean(input.error)
+  };
+}
+
 export function SessionProvider({ children }) {
   const [sessions, setSessions] = useState(() => [createSession()]);
   const [activeId, setActiveId] = useState(null);
@@ -89,7 +102,7 @@ export function SessionProvider({ children }) {
       setActiveId(id);
     }
 
-    function addMessageToActiveSession({ text, videoUrl }) {
+    function addMessageToActiveSession(messageInput) {
       if (!activeSessionId) return;
 
       setSessions((prev) =>
@@ -97,18 +110,16 @@ export function SessionProvider({ children }) {
           if (session.id !== activeSessionId) return session;
 
           const isFirstInteraction = session.messages.length === 0;
+          const nextMessage = normalizeMessage(messageInput, session);
 
           const nextMessages = [
             ...session.messages,
-            {
-              id: `${session.id}-${session.messages.length + 1}`,
-              text
-            }
+            nextMessage
           ];
 
           let nextVideos = session.videos;
-          if (videoUrl) {
-            const combined = [...session.videos, videoUrl];
+          if (nextMessage.videoUrl) {
+            const combined = [...session.videos, nextMessage.videoUrl];
             if (combined.length > 3) {
               nextVideos = combined.slice(combined.length - 3);
             } else {
@@ -118,7 +129,7 @@ export function SessionProvider({ children }) {
 
           let nextTitle = session.title;
           if (isFirstInteraction && !nextTitle) {
-            nextTitle = deriveTitleFromText(text);
+            nextTitle = deriveTitleFromText(nextMessage.text);
           }
 
           return {

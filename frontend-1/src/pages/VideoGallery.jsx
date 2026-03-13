@@ -60,7 +60,7 @@
 import { useEffect, useState } from "react";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
 
-const BACKEND_BASE_URL = "http://localhost:8001";
+const BACKEND_BASE_URL = "http://localhost:8005";
 
 export default function VideoGallery() {
   const [videos, setVideos] = useState([]);
