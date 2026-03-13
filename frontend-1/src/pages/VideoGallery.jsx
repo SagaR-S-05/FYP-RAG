@@ -58,15 +58,20 @@
 //   );
 // }
 import { useEffect, useState } from "react";
-import { supabase } from "../../backend/db/supabase_client.py";
+import { isSupabaseConfigured, supabase } from "../lib/supabase";
 
-const BACKEND_BASE_URL = "http://localhost:8000";
+const BACKEND_BASE_URL = "http://localhost:8001";
 
 export default function VideoGallery() {
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) {
+      setLoading(false);
+      return;
+    }
+
     async function fetchVideos() {
       try {
         const { data, error } = await supabase
@@ -97,6 +102,19 @@ export default function VideoGallery() {
 
     fetchVideos();
   }, []);
+
+  if (!isSupabaseConfigured) {
+    return (
+      <div className="videoGalleryPage">
+        <h1 className="pageTitle">Video Gallery</h1>
+        <p className="mutedText">
+          Supabase is not configured for the frontend yet. Add
+          `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to
+          `frontend-1/.env`.
+        </p>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

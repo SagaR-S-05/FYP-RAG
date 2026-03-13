@@ -24,6 +24,7 @@ export default function Chat() {
   const [stageStatus, setStageStatus] = useState(() =>
     stages.map(() => "pending")
   );
+  const [pendingResult, setPendingResult] = useState(null);
   const { activeSession, addMessageToActiveSession } = useSessions();
   const textareaRef = useRef(null);
 
@@ -79,9 +80,8 @@ export default function Chat() {
       messageText = "Fallback Video (API unavailable)";
     }
 
-    // Always render video
     const cacheBustedUrl = `${finalVideoUrl}?t=${Date.now()}`;
-    addMessageToActiveSession({ text: messageText, videoUrl: cacheBustedUrl });
+    setPendingResult({ text: messageText, videoUrl: cacheBustedUrl });
 
     setPrompt("");
     if (textareaRef.current) {
@@ -177,10 +177,28 @@ export default function Chat() {
     return () => clearInterval(id);
   }, [isAnimating, currentStageIndex]);
 
+  useEffect(() => {
+    const hasCompletedGeneration =
+      !loading &&
+      !isAnimating &&
+      pendingResult &&
+      stageStatus.every((status) => status === "complete");
+
+    if (!hasCompletedGeneration) {
+      return;
+    }
+
+    addMessageToActiveSession(pendingResult);
+    setPendingResult(null);
+    setCurrentStageIndex(-1);
+    setStageProgress(0);
+    setStageStatus(stages.map(() => "pending"));
+  }, [addMessageToActiveSession, isAnimating, loading, pendingResult, stageStatus]);
+
   const renderStageProgress = () => {
     const hasAnyProgress = stageStatus.some((status) => status !== "pending");
 
-    if (!isAnimating && !hasAnyProgress) {
+    if (!hasAnyProgress) {
       return null;
     }
 
@@ -411,7 +429,7 @@ export default function Chat() {
                 <div className="welcomeMessage">{welcomeMessage}</div>
               )}
 
-              {videos.length > 0 && (
+              {!isAnimating && videos.length > 0 && (
                 <div className="videoList">
                   {videos.map((url, index) => (
                     <div
