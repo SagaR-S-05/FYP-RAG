@@ -1,0 +1,95 @@
+{
+  "metadata": {
+    "timestamp": "20260314_233650",
+    "eval_size": 140,
+    "top_k": 3,
+    "model": "qwen2.5-coder:latest",
+    "embedding_model": "BAAI/bge-small-en-v1.5"
+  },
+  "retrieval": {
+    "Recall@3": 0.0,
+    "MRR": 0.0,
+    "hits": 0,
+    "total": 140,
+    "rank_hits": [
+      0,
+      0,
+      0
+    ],
+    "Precision@1": 0.0,
+    "Precision@2": 0.0,
+    "Precision@3": 0.0
+  },
+  "rag_gen": {
+    "Syntax Validity Rate": 1.0,
+    "BLEU-4": 0.4926826038480971,
+    "BLEU-4 (std)": 0.22966527681723184,
+    "CodeBLEU": 0.6700919110783886,
+    "CodeBLEU (std)": 0.19070781750291696,
+    "AST Similarity": 0.8901448413953058,
+    "AST Similarity (std)": 0.09545680632223094,
+    "Cyclomatic Complexity Delta": 0.7357142857142858,
+    "CC Delta (std)": 1.5657527367541344,
+    "Animation API Coverage": 0.8840476190476191,
+    "Mobject API Coverage": 0.8329506802721088,
+    "Avg Repair Attempts": 1.0,
+    "n": 140
+  },
+  "baseline": {
+    "Syntax Validity Rate": 1.0,
+    "BLEU-4": 0.29284961530388554,
+    "BLEU-4 (std)": 0.14140827629381908,
+    "CodeBLEU": 0.5921257023984263,
+    "CodeBLEU (std)": 0.11881692761183377,
+    "AST Similarity": 0.816772052471974,
+    "AST Similarity (std)": 0.103539178923229,
+    "Cyclomatic Complexity Delta": 0.9142857142857143,
+    "CC Delta (std)": 1.7504518367133273,
+    "Animation API Coverage": 0.6461904761904762,
+    "Mobject API Coverage": 0.5781547619047619,
+    "Avg Repair Attempts": 1.0,
+    "n": 140
+  },
+  "ablation": {
+    "1": {
+      "Recall@1": 0.0,
+      "MRR": 0.0,
+      "hits": 0,
+      "total": 140,
+      "rank_hits": [
+        0
+      ],
+      "Precision@1": 0.0
+    },
+    "3": {
+      "Recall@3": 0.0,
+      "MRR": 0.0,
+      "hits": 0,
+      "total": 140,
+      "rank_hits": [
+        0,
+        0,
+        0
+      ],
+      "Precision@1": 0.0,
+      "Precision@2": 0.0,
+      "Precision@3": 0.0
+    },
+    "5": {
+      "Recall@5": 0.0,
+      "MRR": 0.0,
+      "hits": 0,
+      "total": 140,
+      "rank_hits": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "Precision@1": 0.0,
+      "Precision@2": 0.0,
+      "Precision@3": 0.0
+    }
+  }
+}
