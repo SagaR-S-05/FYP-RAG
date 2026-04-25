@@ -34,8 +34,14 @@
 #         )
 # =============================================================================
 
+import os
+from pathlib import Path
 from typing import Iterator
 from langchain_ollama import OllamaLLM
+from dotenv import load_dotenv
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(PROJECT_ROOT / ".env")
 
 
 # -----------------------------------------------------------------------------
@@ -44,7 +50,7 @@ from langchain_ollama import OllamaLLM
 
 # Reuses the model already loaded by the RAG pipeline to avoid additional
 # memory overhead from initialising a second model instance.
-_LLM_MODEL: str = "qwen2.5-coder:latest"
+_LLM_MODEL: str = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:latest")
 
 # Higher temperature than code generation (0.2) to produce a warmer,
 # more conversational explanatory tone appropriate for a beginner audience.

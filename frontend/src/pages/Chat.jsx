@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, Save } from "lucide-react";
 import { useSessions } from "../sessionContext.jsx";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
 
@@ -12,6 +12,24 @@ const stages = [
   { name: "Complete", duration: 0 },
 ];
 
+const stageSoftCaps = {
+  "Analyzing Prompt": 88,
+  "Generating Code": 92,
+  "Code Ready": 100,
+  "Rendering Frames": 94,
+  "Finalizing Video": 90,
+  Complete: 100,
+};
+
+const stageSmoothStep = {
+  "Analyzing Prompt": 3,
+  "Generating Code": 1.4,
+  "Code Ready": 8,
+  "Rendering Frames": 0.8,
+  "Finalizing Video": 1.8,
+  Complete: 0,
+};
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 
 function buildApiUrl(path) {
@@ -20,6 +38,17 @@ function buildApiUrl(path) {
     return `${API_BASE_URL}${normalizedPath}`;
   }
   return `/api${normalizedPath}`;
+}
+
+function extractGalleryVideoId(videoPath) {
+  if (!videoPath) return null;
+  const clean = String(videoPath).trim().replace(/\\/g, "/").split("?")[0].split("#")[0];
+  const renderedIndex = clean.toLowerCase().lastIndexOf("rendered_videos/");
+  if (renderedIndex >= 0) {
+    return clean.slice(renderedIndex + "rendered_videos/".length).replace(/^\/+/, "");
+  }
+  const fileName = clean.split("/").filter(Boolean).pop();
+  return fileName && fileName.toLowerCase().endsWith(".mp4") ? fileName : null;
 }
 
 function resolveVideoUrl(videoUrl) {
@@ -173,14 +202,131 @@ export default function Chat() {
   const [stageStatus, setStageStatus] = useState(() =>
     stages.map(() => "pending")
   );
-  const { activeSession, addMessageToActiveSession } = useSessions();
+  const {
+    activeSession,
+    addMessageToActiveSession,
+    updateMessageInActiveSession,
+  } = useSessions();
   const textareaRef = useRef(null);
   const messagesEndRef = useRef(null);
+  const [savingGalleryId, setSavingGalleryId] = useState(null);
 
   // Determine if the current session has zero messages
   const isEmptySession =
     !!activeSession &&
     (!activeSession.messages || activeSession.messages.length === 0);
+
+  const applyBackendProgress = (stageName, progressValue = 0) => {
+    const stageIndex = stages.findIndex((stage) => stage.name === stageName);
+    if (stageIndex < 0) return;
+
+    setCurrentStageIndex(stageIndex);
+    setStageProgress(Math.max(0, Math.min(100, Number(progressValue) || 0)));
+    setStageStatus(
+      stages.map((_, index) => {
+        if (index < stageIndex) return "complete";
+        if (index === stageIndex) return progressValue >= 100 ? "complete" : "running";
+        return "pending";
+      })
+    );
+  };
+
+  const generateWithBackendProgress = async (userPrompt) => {
+    const response = await fetch(buildApiUrl("/generate-stream"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ prompt: userPrompt }),
+    });
+
+    if (!response.ok || !response.body) {
+      const data = await response.json().catch(() => null);
+      throw new Error(data?.detail || data?.error || "Video generation failed.");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finalData = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const event = JSON.parse(line);
+
+        if (event.type === "progress") {
+          applyBackendProgress(event.stage, event.progress);
+        } else if (event.type === "complete") {
+          finalData = event.data;
+        } else if (event.type === "error") {
+          throw new Error(event.error || "Video generation failed.");
+        }
+      }
+    }
+
+    const trailing = buffer.trim();
+    if (trailing) {
+      const event = JSON.parse(trailing);
+      if (event.type === "progress") {
+        applyBackendProgress(event.stage, event.progress);
+      } else if (event.type === "complete") {
+        finalData = event.data;
+      } else if (event.type === "error") {
+        throw new Error(event.error || "Video generation failed.");
+      }
+    }
+
+    if (!finalData || finalData.status !== "success") {
+      throw new Error(finalData?.error || "Video generation failed.");
+    }
+
+    return finalData;
+  };
+
+  const streamInsightMessage = async (messageId, userPrompt) => {
+    try {
+      const insightResponse = await fetch(
+        buildApiUrl(`/insight?prompt=${encodeURIComponent(userPrompt)}`)
+      );
+
+      if (!insightResponse.ok || !insightResponse.body) {
+        throw new Error("Insight generation failed.");
+      }
+
+      const reader = insightResponse.body.getReader();
+      const decoder = new TextDecoder();
+      let insightText = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        insightText += decoder.decode(value, { stream: true });
+        updateMessageInActiveSession(messageId, {
+          text: insightText || "Preparing a quick insight...",
+        });
+      }
+
+      insightText += decoder.decode();
+      updateMessageInActiveSession(messageId, {
+        text: insightText.trim() || "Insight could not be generated, but I can still render the video.",
+        pending: false,
+      });
+    } catch (insightErr) {
+      console.error("Insight error:", insightErr);
+      updateMessageInActiveSession(messageId, {
+        text: "Insight could not be generated, but I can still render the video.",
+        pending: false,
+      });
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -200,21 +346,18 @@ export default function Chat() {
     setStageStatus(stages.map((_, index) => (index === 0 ? "running" : "pending")));
 
     try {
-      const response = await fetch(buildApiUrl("/generate"), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ prompt: userPrompt }),
+      const insightMessageId = `${activeSession.id}-insight-${Date.now()}`;
+      addMessageToActiveSession({
+        id: insightMessageId,
+        role: "assistant",
+        text: "Preparing a quick insight...",
+        pending: true,
+        insight: true,
       });
 
-      const data = await response.json().catch(() => null);
+      streamInsightMessage(insightMessageId, userPrompt);
 
-      if (!response.ok || data?.status !== "success") {
-        const backendError =
-          data?.error || data?.detail || "Video generation failed.";
-        throw new Error(backendError);
-      }
+      const data = await generateWithBackendProgress(userPrompt);
 
       let videoPath = data?.video_url || null;
       let dbVideoId = null;
@@ -243,6 +386,8 @@ export default function Chat() {
         role: "assistant",
         text: "Your animation is ready.",
         videoUrl: cacheBustedUrl,
+        galleryVideoId: extractGalleryVideoId(videoPath),
+        galleryName: userPrompt,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Something went wrong.";
@@ -307,54 +452,29 @@ export default function Chat() {
 
   useEffect(() => {
     if (!isAnimating || currentStageIndex < 0 || currentStageIndex >= stages.length) {
-      return;
+      return undefined;
     }
 
     const currentStage = stages[currentStageIndex];
-
-    if (currentStage.duration === 0) {
-      setStageProgress(100);
-      setStageStatus((prev) => {
-        const next = [...prev];
-        next[currentStageIndex] = "complete";
-        return next;
-      });
-      setIsAnimating(false);
-      return;
+    const status = stageStatus[currentStageIndex];
+    if (status !== "running") {
+      return undefined;
     }
 
-    const start = Date.now();
-    const intervalMs = 100;
+    const softCap = stageSoftCaps[currentStage.name] ?? 90;
+    const step = stageSmoothStep[currentStage.name] ?? 1;
 
     const id = setInterval(() => {
-      const elapsed = Date.now() - start;
-      const rawProgress = (elapsed / currentStage.duration) * 100;
-      const clamped = Math.min(100, rawProgress);
-
-      setStageProgress(clamped);
-
-      if (clamped >= 100) {
-        clearInterval(id);
-
-        setStageStatus((prev) => {
-          const next = [...prev];
-          next[currentStageIndex] = "complete";
-          if (currentStageIndex < stages.length - 1) {
-            next[currentStageIndex + 1] = "running";
-          }
-          return next;
-        });
-
-        if (currentStageIndex < stages.length - 1) {
-          setCurrentStageIndex((prevIndex) => prevIndex + 1);
-        } else {
-          setIsAnimating(false);
-        }
-      }
-    }, intervalMs);
+      setStageProgress((prev) => {
+        if (prev >= softCap) return prev;
+        const distance = softCap - prev;
+        const easing = Math.max(0.12, distance / 120);
+        return Math.min(softCap, prev + step * easing);
+      });
+    }, 350);
 
     return () => clearInterval(id);
-  }, [isAnimating, currentStageIndex]);
+  }, [isAnimating, currentStageIndex, stageStatus]);
 
   const renderStageProgress = () => {
     const hasAnyProgress = isAnimating && stageStatus.some((status) => status !== "pending");
@@ -364,24 +484,8 @@ export default function Chat() {
     }
 
     return (
-      <div
-        style={{
-          marginTop: "1.5rem",
-          padding: "1rem",
-          borderRadius: "0.75rem",
-          backgroundColor: "var(--card)",
-          border: "1px solid var(--border)",
-          boxShadow: "0 0 0 1px var(--ring)",
-        }}
-      >
-        <div
-          style={{
-            fontSize: "0.9rem",
-            fontWeight: 500,
-            marginBottom: "0.75rem",
-            color: "var(--foreground)",
-          }}
-        >
+      <div className="stageProgressCard">
+        <div className="stageProgressTitle">
           Animation progress
         </div>
         <div
@@ -491,7 +595,64 @@ export default function Chat() {
     );
   };
 
-  const renderMessage = (message) => {
+  const handleSaveToGallery = async (message) => {
+    if (!message.galleryVideoId) return;
+    setSavingGalleryId(message.id);
+    setError(null);
+
+    try {
+      const response = await fetch(buildApiUrl("/gallery/save"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          video_id: message.galleryVideoId,
+          name: message.galleryName || "Generated animation",
+          folder: "Unsorted",
+        }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(data?.detail || "Could not save video to gallery.");
+      }
+      updateMessageInActiveSession(message.id, {
+        gallerySaved: true,
+      });
+    } catch (err) {
+      const messageText = err instanceof Error ? err.message : "Could not save video to gallery.";
+      setError(messageText);
+    } finally {
+      setSavingGalleryId(null);
+    }
+  };
+
+  const renderWorkflowPanel = () => {
+    if (!isAnimating) return null;
+
+    const insightMessage = [...(activeSession?.messages || [])]
+      .reverse()
+      .find((message) => message.insight);
+    const progress = renderStageProgress();
+    if (!insightMessage && !progress) return null;
+
+    return (
+      <div className="generationWorkflow">
+        <div className="generationInsightPanel">
+          {insightMessage ? (
+            renderMessage(insightMessage, { embedded: true })
+          ) : (
+            <div className="chatBubble chatBubbleAssistant">
+              <div className="chatMessageText">Preparing a quick insight...</div>
+            </div>
+          )}
+        </div>
+        <div className="generationProgressPanel">{progress}</div>
+      </div>
+    );
+  };
+
+  const renderMessage = (message, options = {}) => {
     const isUser = message.role === "user";
     const messageClassName = isUser
       ? "chatBubble chatBubbleUser"
@@ -500,18 +661,36 @@ export default function Chat() {
       : "chatBubble chatBubbleAssistant";
 
     return (
-      <div key={message.id} className={messageClassName}>
+      <div key={message.id} className={`${messageClassName}${options.embedded ? " chatBubbleEmbedded" : ""}`}>
         {message.text && <div className="chatMessageText">{message.text}</div>}
+        {message.pending && <div className="mutedText">Loading...</div>}
         {message.videoUrl && (
-          <div className="videoContainer chatMessageVideo">
-            <video
-              className="generatedVideo"
-              controls
-              autoPlay
-              src={message.videoUrl}
-            >
-              Your browser does not support the video tag.
-            </video>
+          <div className="chatVideoBlock">
+            <div className="videoContainer chatMessageVideo">
+              <video
+                className="generatedVideo"
+                controls
+                autoPlay
+                src={message.videoUrl}
+              >
+                Your browser does not support the video tag.
+              </video>
+            </div>
+            {message.galleryVideoId && (
+              <button
+                className="iconTextButton chatSaveButton"
+                type="button"
+                onClick={() => handleSaveToGallery(message)}
+                disabled={message.gallerySaved || savingGalleryId === message.id}
+              >
+                <Save size={17} />
+                {message.gallerySaved
+                  ? "Saved to gallery"
+                  : savingGalleryId === message.id
+                  ? "Saving..."
+                  : "Save to gallery"}
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -546,7 +725,7 @@ export default function Chat() {
                 onSubmit={handleSubmit}
                 style={{ marginTop: "1rem" }}
               >
-                {renderStageProgress()}
+                {renderWorkflowPanel()}
                 <div
                   className="inputWrapper"
                   style={{ display: "flex", justifyContent: "center" }}
@@ -617,9 +796,11 @@ export default function Chat() {
                 <div className="welcomeMessage">{welcomeMessage}</div>
               )}
 
-              {activeSession?.messages?.map(renderMessage)}
+              {activeSession?.messages
+                ?.filter((message) => !(isAnimating && message.insight))
+                .map((message) => renderMessage(message))}
 
-              {renderStageProgress()}
+              {renderWorkflowPanel()}
 
               <div ref={messagesEndRef} />
             </div>

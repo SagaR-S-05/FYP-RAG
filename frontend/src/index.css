@@ -589,6 +589,59 @@ body {
   gap: 1rem;
 }
 
+.generationWorkflow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.85fr);
+  gap: 1rem;
+  align-items: stretch;
+  width: 100%;
+}
+
+.generationInsightPanel,
+.generationProgressPanel {
+  min-width: 0;
+}
+
+.generationInsightPanel .chatBubble,
+.generationProgressPanel .stageProgressCard {
+  height: 100%;
+}
+
+.chatBubbleEmbedded {
+  max-width: none;
+  width: 100%;
+}
+
+.stageProgressCard {
+  padding: 1rem;
+  border-radius: 0.75rem;
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  box-shadow: 0 0 0 1px var(--ring);
+}
+
+.stageProgressTitle {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  color: var(--foreground);
+}
+
+.chatVideoBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.chatSaveButton {
+  align-self: flex-start;
+}
+
+.chatSaveButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
 /* Video gallery */
 
 .videoGalleryPage {
@@ -675,4 +728,170 @@ body {
 
 .downloadButton:hover {
   opacity: 0.9;
+}
+
+.galleryHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.galleryFolderForm,
+.galleryRenameForm,
+.galleryActions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.galleryInput,
+.gallerySelect {
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background-color: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  padding: 0.45rem 0.65rem;
+}
+
+.galleryInput:focus,
+.gallerySelect:focus {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.iconTextButton,
+.iconButton {
+  min-height: 40px;
+  border: 1px solid var(--border);
+  background-color: var(--card);
+  color: var(--foreground);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.iconTextButton {
+  gap: 0.45rem;
+  border-radius: 0.5rem;
+  padding: 0 0.8rem;
+}
+
+.iconButton {
+  width: 40px;
+  border-radius: 0.5rem;
+}
+
+.iconTextButton:hover,
+.iconButton:hover {
+  background-color: var(--accent);
+}
+
+.iconButtonDanger {
+  color: var(--destructive);
+}
+
+.galleryLayout {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.galleryFolders {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.galleryFolderButton {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background-color: var(--card);
+  color: var(--foreground);
+  cursor: pointer;
+  font: inherit;
+  min-height: 40px;
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+}
+
+.galleryFolderButton:hover,
+.galleryFolderButtonActive {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.galleryContent {
+  min-width: 0;
+}
+
+.galleryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+.galleryVideoCard {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background-color: var(--card);
+  overflow: hidden;
+}
+
+.galleryVideoBody {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.9rem;
+}
+
+.galleryVideoTitle {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.galleryRenameForm {
+  align-items: stretch;
+}
+
+.galleryRenameForm .galleryInput {
+  flex: 1;
+  min-width: 0;
+}
+
+.galleryActions {
+  flex-wrap: wrap;
+}
+
+.gallerySelect {
+  flex: 1;
+  min-width: 130px;
+}
+
+@media (max-width: 760px) {
+  .generationWorkflow {
+    grid-template-columns: 1fr;
+  }
+
+  .galleryLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .galleryFolders {
+    flex-direction: row;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+  }
+
+  .galleryFolderButton {
+    width: auto;
+    white-space: nowrap;
+  }
 }

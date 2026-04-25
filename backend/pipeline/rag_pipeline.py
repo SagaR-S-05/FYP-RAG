@@ -9,6 +9,7 @@ import re
 import ast
 import hashlib
 import shutil
+import os
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
@@ -18,6 +19,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_ollama import OllamaLLM
+from dotenv import load_dotenv
 
 
 # =========================
@@ -39,6 +41,8 @@ FAISS_DIR = PROJECT_ROOT / "manim_faiss_store_v2"
 # Eval split file — stored alongside the FAISS index
 EVAL_SPLIT_PATH = PROJECT_ROOT / "manim_faiss_store_v2" / "eval_split.json"
 
+load_dotenv(PROJECT_ROOT / ".env")
+
 
 # =========================
 # CONFIG
@@ -46,7 +50,7 @@ EVAL_SPLIT_PATH = PROJECT_ROOT / "manim_faiss_store_v2" / "eval_split.json"
 
 # Better embedding model for code semantics
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
-LLM_MODEL = "qwen2.5-coder:latest"
+LLM_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:latest")
 
 TOP_K = 3
 MAX_REPAIR_ATTEMPTS = 3

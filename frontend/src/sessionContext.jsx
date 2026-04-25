@@ -77,7 +77,12 @@ function normalizeMessage(input, session) {
     role,
     text,
     videoUrl: input.videoUrl ?? null,
-    error: Boolean(input.error)
+    error: Boolean(input.error),
+    pending: Boolean(input.pending),
+    insight: Boolean(input.insight),
+    galleryVideoId: input.galleryVideoId ?? null,
+    galleryName: input.galleryName ?? "",
+    gallerySaved: Boolean(input.gallerySaved)
   };
 }
 
@@ -157,6 +162,28 @@ export function SessionProvider({ children }) {
       );
     }
 
+    function updateMessageInActiveSession(messageId, patch) {
+      if (!activeSessionId) return;
+
+      setSessions((prev) =>
+        prev.map((session) => {
+          if (session.id !== activeSessionId) return session;
+
+          return {
+            ...session,
+            messages: session.messages.map((message) =>
+              message.id === messageId
+                ? {
+                    ...message,
+                    ...patch
+                  }
+                : message
+            )
+          };
+        })
+      );
+    }
+
     return {
       sessions,
       activeSession,
@@ -164,6 +191,7 @@ export function SessionProvider({ children }) {
       selectSession,
       createAndSelectSession,
       addMessageToActiveSession,
+      updateMessageInActiveSession,
       updateSessionTitle
     };
   }, [sessions, activeSessionId]);
