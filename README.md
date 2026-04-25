@@ -12,7 +12,7 @@ The system uses a Retrieval-Augmented Generation (RAG) pipeline to improve accur
 ---
 
 ## System Architecture
-![System Architecture](./assets/architecture.png)
+![System Architecture](./assets/arch.png)
 
 The architecture consists of:
 
@@ -43,7 +43,7 @@ Pipeline steps:
 ---
 
 ## UI and Output
-![UI Output](./assets/demo.png)
+![UI Output](./assets/demo.jpeg)
 
 The interface allows users to:
 
