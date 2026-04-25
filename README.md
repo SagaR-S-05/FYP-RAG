@@ -58,8 +58,8 @@ The interface allows users to:
 
 ### Clone Repository
 ```bash
-git clone https://github.com/your-repo/mlviz.git
-cd mlviz
+git clone https://github.com/SagaR-S-05/FYP-RAG.git
+cd FYP-RAG
 ````
 
 ---
@@ -67,6 +67,7 @@ cd mlviz
 ## Backend Setup
 
 ```bash
+Python 
 pip install -r requirements.txt
 uvicorn backend.main:app --reload --port 8005
 ```
