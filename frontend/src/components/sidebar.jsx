@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
+import { Menu } from "lucide-react";
 
 const SidebarContext = createContext(null);
 const SIDEBAR_COOKIE = "sidebar-collapsed";
@@ -77,7 +78,7 @@ export function SidebarTrigger(props) {
       className="sidebarTrigger bg-sidebar-accent text-sidebar-accent-foreground"
       {...props}
     >
-      ☰
+      <Menu size={21} strokeWidth={2.1} />
     </button>
   );
 }

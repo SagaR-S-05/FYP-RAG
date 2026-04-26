@@ -381,6 +381,9 @@ MANIM API SAFETY RULES:
 - Ensure all objects are properly positioned
 - Include appropriate wait times between animations
 - Use Rotate() for rotation animations
+- Do not pass buff= into object constructors unless the class is Arrow or CurvedArrow.
+- For 3D vector scenes, use Arrow3D(start=..., end=..., color=..., thickness=...) without buff=.
+- For cross product visualizations, draw two input vectors in the xy-plane and the result vector along z using ThreeDScene, ThreeDAxes, and Arrow3D with no buff keyword.
 """
 
 GENERATION_PROMPT = PromptTemplate(
@@ -472,6 +475,7 @@ Project constraints:
 2. Exactly one Scene class must be defined
 3. No unsafe imports are allowed (os, sys, subprocess, socket, requests, eval, exec)
 4. The animation must render successfully in Manim without runtime errors.
+5. Do not pass buff= into constructors such as Arrow3D, Line3D, ThreeDAxes, Dot3D, Dot, Text, MathTex, VGroup, or shape classes. Use buff only in methods like next_to(), arrange(), or in Arrow/CurvedArrow constructors.
 
 Original user request:
 {original_request}

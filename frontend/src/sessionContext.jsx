@@ -41,14 +41,23 @@ const STOPWORDS = new Set([
 ]);
 
 function deriveTitleFromText(text) {
-  const tokens = text
-    .split(/\s+/)
-    .map((word) => word.replace(/[^a-zA-Z]/g, "").toLowerCase())
-    .filter(Boolean);
+  const cleaned = text
+    .replace(/^(visualize|show|animate|demonstrate|illustrate|create|plot|draw)\s+/i, "")
+    .replace(/[.?!]+$/g, "")
+    .trim();
 
-  const keyword = tokens.find((word) => !STOPWORDS.has(word));
-  if (!keyword) return "Chat";
-  return keyword.charAt(0).toUpperCase() + keyword.slice(1);
+  if (!cleaned) return "New Chat";
+
+  const words = cleaned
+    .split(/\s+/)
+    .map((word) => word.replace(/[^a-zA-Z0-9+-]/g, ""))
+    .filter((word) => word && !STOPWORDS.has(word.toLowerCase()));
+
+  const titleWords = words.length > 0 ? words : cleaned.split(/\s+/);
+  return titleWords
+    .slice(0, 6)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 function pickWelcomeMessage() {
@@ -61,7 +70,7 @@ function createSession() {
   return {
     id: String(now),
     createdAt: now,
-    title: null,
+    title: "New Chat",
     welcomeMessage: pickWelcomeMessage(),
     messages: [],
     videos: []
@@ -80,6 +89,7 @@ function normalizeMessage(input, session) {
     error: Boolean(input.error),
     pending: Boolean(input.pending),
     insight: Boolean(input.insight),
+    quickFact: Boolean(input.quickFact),
     galleryVideoId: input.galleryVideoId ?? null,
     galleryName: input.galleryName ?? "",
     gallerySaved: Boolean(input.gallerySaved)
@@ -107,14 +117,13 @@ export function SessionProvider({ children }) {
       setActiveId(id);
     }
 
-    function addMessageToActiveSession(messageInput) {
-      if (!activeSessionId) return;
+    function addMessageToSession(sessionId, messageInput) {
+      if (!sessionId) return;
 
       setSessions((prev) =>
         prev.map((session) => {
-          if (session.id !== activeSessionId) return session;
+          if (session.id !== sessionId) return session;
 
-          const isFirstInteraction = session.messages.length === 0;
           const nextMessage = normalizeMessage(messageInput, session);
 
           const nextMessages = [
@@ -132,9 +141,14 @@ export function SessionProvider({ children }) {
             }
           }
 
-          let nextTitle = session.title;
-          if (isFirstInteraction && !nextTitle) {
+          let nextTitle = session.title || "New Chat";
+          if (
+            nextMessage.role === "user" &&
+            (session.title === "New Chat" || !session.title)
+          ) {
             nextTitle = deriveTitleFromText(nextMessage.text);
+          } else if (nextMessage.videoUrl && nextMessage.galleryName) {
+            nextTitle = deriveTitleFromText(nextMessage.galleryName);
           }
 
           return {
@@ -162,12 +176,16 @@ export function SessionProvider({ children }) {
       );
     }
 
-    function updateMessageInActiveSession(messageId, patch) {
-      if (!activeSessionId) return;
+    function addMessageToActiveSession(messageInput) {
+      addMessageToSession(activeSessionId, messageInput);
+    }
+
+    function updateMessageInSession(sessionId, messageId, patch) {
+      if (!sessionId) return;
 
       setSessions((prev) =>
         prev.map((session) => {
-          if (session.id !== activeSessionId) return session;
+          if (session.id !== sessionId) return session;
 
           return {
             ...session,
@@ -184,13 +202,19 @@ export function SessionProvider({ children }) {
       );
     }
 
+    function updateMessageInActiveSession(messageId, patch) {
+      updateMessageInSession(activeSessionId, messageId, patch);
+    }
+
     return {
       sessions,
       activeSession,
       activeSessionId,
       selectSession,
       createAndSelectSession,
+      addMessageToSession,
       addMessageToActiveSession,
+      updateMessageInSession,
       updateMessageInActiveSession,
       updateSessionTitle
     };

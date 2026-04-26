@@ -30,6 +30,20 @@ const stageSmoothStep = {
   Complete: 0,
 };
 
+const defaultStageStatus = stages.map(() => "pending");
+
+function createGenerationState(overrides = {}) {
+  return {
+    loading: false,
+    isAnimating: false,
+    composerLeaving: false,
+    currentStageIndex: -1,
+    stageProgress: 0,
+    stageStatus: defaultStageStatus,
+    ...overrides,
+  };
+}
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 
 function buildApiUrl(path) {
@@ -157,6 +171,127 @@ async function findLoadableVideoUrl(videoPath, dbVideoId = null, dbPromptId = nu
   return candidates[0] || null;
 }
 
+async function validateDomain(userPrompt) {
+  const response = await fetch(buildApiUrl("/validate-domain"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ prompt: userPrompt }),
+  });
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(data?.detail || data?.error || "Could not validate prompt.");
+  }
+
+  if (!data?.allowed) {
+    throw new Error(
+      data?.message ||
+        "I can only generate Math, Machine Learning, or Deep Learning visualizations."
+    );
+  }
+}
+
+function getPromptTopic(userPrompt) {
+  const cleaned = userPrompt
+    .replace(/^(visualize|show|animate|demonstrate|illustrate|create|plot|draw)\s+/i, "")
+    .replace(/[.?!]+$/g, "")
+    .trim();
+
+  return cleaned || userPrompt.trim() || "this concept";
+}
+
+function buildInsightPlaceholder(userPrompt, index = 0) {
+  const normalized = userPrompt.toLowerCase();
+  let facts = [];
+
+  if (normalized.includes("cross product")) {
+    facts = [
+      "The cross product is unique to three-dimensional vectors and points perpendicular to the plane made by the inputs.",
+      "The right-hand rule is the classic memory trick: curl your fingers from the first vector to the second, and your thumb gives the result.",
+      "The cross product's length equals the area of the parallelogram spanned by the two vectors.",
+      "Swapping the order flips the result: a cross b points opposite to b cross a."
+    ];
+  } else if (normalized.includes("dot product")) {
+    facts = [
+      "The dot product links algebra and geometry: it measures how much one vector points in another vector's direction.",
+      "A dot product of zero means the two vectors are perpendicular.",
+      "The dot product can be written as a multiplication of magnitudes and the cosine of the angle between vectors."
+    ];
+  } else if (normalized.includes("vector")) {
+    facts = [
+      "The term vector comes from a Latin root meaning to carry, which fits the idea of a quantity with direction.",
+      "A vector keeps its magnitude and direction even if you slide it to a different starting point.",
+      "Basis vectors act like building blocks: other vectors can be assembled from scaled basis directions."
+    ];
+  } else if (normalized.includes("gradient") || normalized.includes("optimization")) {
+    facts = [
+      "Gradient descent became a workhorse of modern ML because it turns learning into repeated small corrections.",
+      "The gradient points toward steepest increase, so descent moves in the opposite direction.",
+      "Small learning rates move carefully; large learning rates can overshoot the minimum."
+    ];
+  } else if (normalized.includes("regression")) {
+    facts = [
+      "Regression traces back to Francis Galton's 19th-century statistics work, long before modern machine learning.",
+      "In ML, regression predicts continuous values, while classification predicts discrete labels.",
+      "Linear regression chooses a line by minimizing the total squared prediction error."
+    ];
+  } else if (normalized.includes("feedforward") || normalized.includes("forward propagation")) {
+    facts = [
+      "A feedforward neural network moves information in one direction: input layer, hidden layers, then output layer.",
+      "Forward propagation is just repeated matrix multiplication plus activation functions.",
+      "Hidden layers learn intermediate features, so later layers can combine simpler patterns into richer ones."
+    ];
+  } else if (normalized.includes("neural") || normalized.includes("perceptron")) {
+    facts = [
+      "The perceptron was introduced by Frank Rosenblatt in 1958 and helped shape early neural-network research.",
+      "Modern neural networks learn by adjusting many small weights so simple units compose into complex behavior.",
+      "Activation functions let neural networks model nonlinear patterns instead of only straight-line relationships."
+    ];
+  } else if (normalized.includes("probability") || normalized.includes("bayes")) {
+    facts = [
+      "Bayes' theorem is named after Thomas Bayes and became central to probabilistic reasoning and ML.",
+      "A probability distribution assigns total mass of one across all possible outcomes.",
+      "Bayesian reasoning updates belief by combining prior knowledge with new evidence."
+    ];
+  } else if (normalized.includes("matrix") || normalized.includes("linear algebra")) {
+    facts = [
+      "Matrices can represent transformations like rotation, scaling, shearing, and projection.",
+      "Matrix multiplication composes transformations: applying one transformation after another.",
+      "Eigenvectors are special directions that a matrix stretches or shrinks without rotating."
+    ];
+  } else if (normalized.includes("calculus") || normalized.includes("derivative")) {
+    facts = [
+      "A derivative measures instantaneous rate of change, like slope at a single point.",
+      "Newton and Leibniz independently developed calculus notation and ideas in the 17th century.",
+      "In optimization, derivatives tell us which direction changes a function fastest."
+    ];
+  } else {
+    facts = [
+      "Mathematical models often turn relationships into equations so patterns can be reasoned about precisely.",
+      "In machine learning, features are the measurable inputs a model uses to make predictions.",
+      "Many ML algorithms can be understood as searching for parameters that reduce error."
+    ];
+  }
+
+  return `Preparing a quick insight...\n\n${facts[index % facts.length]}`;
+}
+
+function buildComposerExitMessage(userPrompt) {
+  const options = [
+    "On it!",
+    "Get ready.",
+    "Warming up the renderer.",
+    "Turning the idea into motion.",
+  ];
+  const topic = getPromptTopic(userPrompt).toLowerCase();
+  if (topic.includes("vector")) return "Locking in the vectors.";
+  if (topic.includes("gradient")) return "Following the slope.";
+  if (topic.includes("neural")) return "Firing up the layers.";
+  return options[Math.floor(Math.random() * options.length)];
+}
+
 async function fetchVideoFromDb(promptText) {
   if (!isSupabaseConfigured || !supabase) return null;
 
@@ -194,17 +329,13 @@ async function fetchVideoFromDb(promptText) {
 
 export default function Chat() {
   const [prompt, setPrompt] = useState("");
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [isAnimating, setIsAnimating] = useState(false);
-  const [currentStageIndex, setCurrentStageIndex] = useState(-1);
-  const [stageProgress, setStageProgress] = useState(0);
-  const [stageStatus, setStageStatus] = useState(() =>
-    stages.map(() => "pending")
-  );
+  const [generationBySession, setGenerationBySession] = useState({});
   const {
     activeSession,
-    addMessageToActiveSession,
+    activeSessionId,
+    addMessageToSession,
+    updateMessageInSession,
     updateMessageInActiveSession,
   } = useSessions();
   const textareaRef = useRef(null);
@@ -216,22 +347,42 @@ export default function Chat() {
     !!activeSession &&
     (!activeSession.messages || activeSession.messages.length === 0);
 
-  const applyBackendProgress = (stageName, progressValue = 0) => {
+  const activeGeneration =
+    generationBySession[activeSessionId] || createGenerationState();
+  const loading = activeGeneration.loading;
+  const isAnimating = activeGeneration.isAnimating;
+  const composerLeaving = activeGeneration.composerLeaving;
+  const composerExitMessage = activeGeneration.composerExitMessage || "On it!";
+  const currentStageIndex = activeGeneration.currentStageIndex;
+  const stageProgress = activeGeneration.stageProgress;
+  const stageStatus = activeGeneration.stageStatus;
+
+  const setSessionGeneration = (sessionId, patch) => {
+    setGenerationBySession((prev) => ({
+      ...prev,
+      [sessionId]: createGenerationState({
+        ...(prev[sessionId] || {}),
+        ...patch,
+      }),
+    }));
+  };
+
+  const applyBackendProgress = (sessionId, stageName, progressValue = 0) => {
     const stageIndex = stages.findIndex((stage) => stage.name === stageName);
     if (stageIndex < 0) return;
 
-    setCurrentStageIndex(stageIndex);
-    setStageProgress(Math.max(0, Math.min(100, Number(progressValue) || 0)));
-    setStageStatus(
-      stages.map((_, index) => {
+    setSessionGeneration(sessionId, {
+      currentStageIndex: stageIndex,
+      stageProgress: Math.max(0, Math.min(100, Number(progressValue) || 0)),
+      stageStatus: stages.map((_, index) => {
         if (index < stageIndex) return "complete";
         if (index === stageIndex) return progressValue >= 100 ? "complete" : "running";
         return "pending";
-      })
-    );
+      }),
+    });
   };
 
-  const generateWithBackendProgress = async (userPrompt) => {
+  const generateWithBackendProgress = async (sessionId, userPrompt, onRenderingFrames) => {
     const response = await fetch(buildApiUrl("/generate-stream"), {
       method: "POST",
       headers: {
@@ -263,7 +414,10 @@ export default function Chat() {
         const event = JSON.parse(line);
 
         if (event.type === "progress") {
-          applyBackendProgress(event.stage, event.progress);
+          applyBackendProgress(sessionId, event.stage, event.progress);
+          if (event.stage === "Rendering Frames") {
+            onRenderingFrames?.();
+          }
         } else if (event.type === "complete") {
           finalData = event.data;
         } else if (event.type === "error") {
@@ -276,7 +430,10 @@ export default function Chat() {
     if (trailing) {
       const event = JSON.parse(trailing);
       if (event.type === "progress") {
-        applyBackendProgress(event.stage, event.progress);
+        applyBackendProgress(sessionId, event.stage, event.progress);
+        if (event.stage === "Rendering Frames") {
+          onRenderingFrames?.();
+        }
       } else if (event.type === "complete") {
         finalData = event.data;
       } else if (event.type === "error") {
@@ -291,7 +448,7 @@ export default function Chat() {
     return finalData;
   };
 
-  const streamInsightMessage = async (messageId, userPrompt) => {
+  const streamInsightMessage = async (sessionId, messageId, userPrompt) => {
     try {
       const insightResponse = await fetch(
         buildApiUrl(`/insight?prompt=${encodeURIComponent(userPrompt)}`)
@@ -309,21 +466,24 @@ export default function Chat() {
         const { done, value } = await reader.read();
         if (done) break;
         insightText += decoder.decode(value, { stream: true });
-        updateMessageInActiveSession(messageId, {
-          text: insightText || "Preparing a quick insight...",
+        updateMessageInSession(sessionId, messageId, {
+          text: insightText || "Generating the full insight...",
+          quickFact: false,
         });
       }
 
       insightText += decoder.decode();
-      updateMessageInActiveSession(messageId, {
+      updateMessageInSession(sessionId, messageId, {
         text: insightText.trim() || "Insight could not be generated, but I can still render the video.",
         pending: false,
+        quickFact: false,
       });
     } catch (insightErr) {
       console.error("Insight error:", insightErr);
-      updateMessageInActiveSession(messageId, {
+      updateMessageInSession(sessionId, messageId, {
         text: "Insight could not be generated, but I can still render the video.",
         pending: false,
+        quickFact: false,
       });
     }
   };
@@ -332,32 +492,92 @@ export default function Chat() {
     e.preventDefault();
     const userPrompt = prompt.trim();
     if (!userPrompt || !activeSession) return;
+    const sessionId = activeSession.id;
 
-    addMessageToActiveSession({
+    addMessageToSession(sessionId, {
       role: "user",
       text: userPrompt,
     });
+    setPrompt("");
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.overflowY = "hidden";
+    }
 
-    setLoading(true);
     setError(null);
-    setIsAnimating(true);
-    setCurrentStageIndex(0);
-    setStageProgress(0);
-    setStageStatus(stages.map((_, index) => (index === 0 ? "running" : "pending")));
+    setSessionGeneration(sessionId, {
+      loading: true,
+      composerLeaving: true,
+      composerExitMessage: buildComposerExitMessage(userPrompt),
+      isAnimating: false,
+      currentStageIndex: -1,
+      stageProgress: 0,
+      stageStatus: defaultStageStatus,
+    });
+
+    let insightMessageId = null;
+    let insightStarted = false;
+    let factTimer = null;
 
     try {
-      const insightMessageId = `${activeSession.id}-insight-${Date.now()}`;
-      addMessageToActiveSession({
-        id: insightMessageId,
-        role: "assistant",
-        text: "Preparing a quick insight...",
-        pending: true,
-        insight: true,
+      await validateDomain(userPrompt);
+
+      window.setTimeout(() => {
+        setSessionGeneration(sessionId, {
+          composerLeaving: false,
+        });
+      }, 1800);
+
+      setSessionGeneration(sessionId, {
+        loading: true,
+        isAnimating: true,
+        currentStageIndex: 0,
+        stageProgress: 0,
+        stageStatus: stages.map((_, index) => (index === 0 ? "running" : "pending")),
       });
 
-      streamInsightMessage(insightMessageId, userPrompt);
+      insightMessageId = `${sessionId}-insight-${Date.now()}`;
+      addMessageToSession(sessionId, {
+        id: insightMessageId,
+        role: "assistant",
+        text: buildInsightPlaceholder(userPrompt, 0),
+        pending: true,
+        insight: true,
+        quickFact: true,
+      });
 
-      const data = await generateWithBackendProgress(userPrompt);
+      let factIndex = 0;
+      factTimer = window.setInterval(() => {
+        factIndex += 1;
+        updateMessageInSession(sessionId, insightMessageId, {
+          text: buildInsightPlaceholder(userPrompt, factIndex),
+          quickFact: true,
+        });
+      }, 8000);
+
+      const stopQuickFacts = () => {
+        if (!factTimer) return;
+        window.clearInterval(factTimer);
+        factTimer = null;
+      };
+
+      const startInsightWhenRendering = () => {
+        if (insightStarted) return;
+        insightStarted = true;
+        stopQuickFacts();
+        updateMessageInSession(sessionId, insightMessageId, {
+          text: "Rendering has started. Generating the full insight...",
+          quickFact: false,
+          pending: true,
+        });
+        streamInsightMessage(sessionId, insightMessageId, userPrompt);
+      };
+
+      const data = await generateWithBackendProgress(
+        sessionId,
+        userPrompt,
+        startInsightWhenRendering
+      );
 
       let videoPath = data?.video_url || null;
       let dbVideoId = null;
@@ -382,7 +602,7 @@ export default function Chat() {
       }
       const cacheBustedUrl = `${resolvedVideoUrl}${resolvedVideoUrl.includes("?") ? "&" : "?"}t=${Date.now()}`;
 
-      addMessageToActiveSession({
+      addMessageToSession(sessionId, {
         role: "assistant",
         text: "Your animation is ready.",
         videoUrl: cacheBustedUrl,
@@ -393,23 +613,29 @@ export default function Chat() {
       const message = err instanceof Error ? err.message : "Something went wrong.";
       console.error("API error:", message);
       setError(message);
-      addMessageToActiveSession({
+      addMessageToSession(sessionId, {
         role: "assistant",
         text: message,
         error: true,
       });
     } finally {
-      setPrompt("");
-      if (textareaRef.current) {
-        textareaRef.current.style.height = "auto";
-        textareaRef.current.style.overflowY = "hidden";
+      if (factTimer) {
+        window.clearInterval(factTimer);
       }
-
-      setLoading(false);
-      setIsAnimating(false);
-      setCurrentStageIndex(-1);
-      setStageProgress(0);
-      setStageStatus(stages.map(() => "pending"));
+      if (insightMessageId && !insightStarted) {
+        updateMessageInSession(sessionId, insightMessageId, {
+          pending: false,
+          quickFact: false,
+        });
+      }
+      setSessionGeneration(sessionId, {
+        loading: false,
+        isAnimating: false,
+        composerLeaving: false,
+        currentStageIndex: -1,
+        stageProgress: 0,
+        stageStatus: defaultStageStatus,
+      });
     }
   };
 
@@ -465,16 +691,25 @@ export default function Chat() {
     const step = stageSmoothStep[currentStage.name] ?? 1;
 
     const id = setInterval(() => {
-      setStageProgress((prev) => {
-        if (prev >= softCap) return prev;
-        const distance = softCap - prev;
+      setGenerationBySession((prev) => {
+        const current = prev[activeSessionId];
+        if (!current || !current.isAnimating) return prev;
+        const currentProgress = current.stageProgress;
+        if (currentProgress >= softCap) return prev;
+        const distance = softCap - currentProgress;
         const easing = Math.max(0.12, distance / 120);
-        return Math.min(softCap, prev + step * easing);
+        return {
+          ...prev,
+          [activeSessionId]: {
+            ...current,
+            stageProgress: Math.min(softCap, currentProgress + step * easing),
+          },
+        };
       });
     }, 350);
 
     return () => clearInterval(id);
-  }, [isAnimating, currentStageIndex, stageStatus]);
+  }, [activeSessionId, isAnimating, currentStageIndex, stageStatus]);
 
   const renderStageProgress = () => {
     const hasAnyProgress = isAnimating && stageStatus.some((status) => status !== "pending");
@@ -659,11 +894,19 @@ export default function Chat() {
       : message.error
       ? "chatBubble chatBubbleError"
       : "chatBubble chatBubbleAssistant";
+    const isQuickFact = Boolean(message.quickFact);
 
     return (
-      <div key={message.id} className={`${messageClassName}${options.embedded ? " chatBubbleEmbedded" : ""}`}>
-        {message.text && <div className="chatMessageText">{message.text}</div>}
-        {message.pending && <div className="mutedText">Loading...</div>}
+      <div
+        key={message.id}
+        className={`${messageClassName}${options.embedded ? " chatBubbleEmbedded" : ""}${isQuickFact ? " quickFactBubble" : ""}`}
+      >
+        {message.text && (
+          <div key={isQuickFact ? message.text : undefined} className="chatMessageText">
+            {message.text}
+          </div>
+        )}
+        {message.pending && !message.insight && <div className="mutedText">Loading...</div>}
         {message.videoUrl && (
           <div className="chatVideoBlock">
             <div className="videoContainer chatMessageVideo">
@@ -697,7 +940,16 @@ export default function Chat() {
     );
   };
 
-  const isSubmitDisabled = loading || isAnimating || !prompt.trim();
+  const shouldShowComposer = !loading && !isAnimating;
+  const isSubmitDisabled = !shouldShowComposer || !prompt.trim();
+  const renderComposerExit = () => {
+    if (!composerLeaving) return null;
+    return (
+      <div className="composerExit" role="status" aria-live="polite">
+        <span>{composerExitMessage}</span>
+      </div>
+    );
+  };
 
   return (
     <div className="chatPage">
@@ -720,73 +972,49 @@ export default function Chat() {
                 </div>
               )}
 
-              <form
-                className="chatForm"
-                onSubmit={handleSubmit}
-                style={{ marginTop: "1rem" }}
-              >
-                {renderWorkflowPanel()}
-                <div
-                  className="inputWrapper"
-                  style={{ display: "flex", justifyContent: "center" }}
+              {shouldShowComposer && (
+                <form
+                  className="chatForm"
+                  onSubmit={handleSubmit}
+                  style={{ marginTop: "1rem" }}
                 >
+                  {renderWorkflowPanel()}
                   <div
-                    style={{
-                      width: "100%",
-                      position: "relative",
-                      backgroundColor: "var(--card)",
-                      border: "1px solid var(--border)",
-                      borderRadius: "0.75rem",
-                      padding: "0.5rem",
-                      boxShadow: "0 0 0 1px var(--ring)",
-                    }}
+                    className="inputWrapper"
+                    style={{ display: "flex", justifyContent: "center" }}
                   >
-                    <textarea
-                      ref={textareaRef}
-                      className="chatInput"
-                      value={prompt}
-                      onChange={(e) => setPrompt(e.target.value)}
-                      placeholder="Enter your prompt here..."
-                      rows={1}
-                      disabled={loading || isAnimating}
-                      style={{
-                        width: "100%",
-                        paddingRight: 56,
-                        background: "transparent",
-                        border: "none",
-                        resize: "none",
-                        overflowY: "hidden",
-                      }}
-                    />
+                    <div className="promptComposer">
+                      <textarea
+                        ref={textareaRef}
+                        className="chatInput"
+                        value={prompt}
+                        onChange={(e) => setPrompt(e.target.value)}
+                        placeholder="Enter your prompt here..."
+                        rows={1}
+                        disabled={!shouldShowComposer}
+                        style={{
+                          width: "100%",
+                          paddingRight: 56,
+                          background: "transparent",
+                          border: "none",
+                          resize: "none",
+                          overflowY: "hidden",
+                        }}
+                      />
 
-                    <button
-                      type="submit"
-                      aria-label="Send prompt"
-                      disabled={isSubmitDisabled}
-                      style={{
-                        position: "absolute",
-                        right: 8,
-                        top: "50%",
-                        transform: "translateY(-50%)",
-                        border: "none",
-                        backgroundColor: "var(--primary)",
-                        color: "var(--primary-foreground)",
-                        width: 40,
-                        height: 40,
-                        borderRadius: 999,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        cursor:
-                          isSubmitDisabled ? "not-allowed" : "pointer",
-                        opacity: isSubmitDisabled ? 0.6 : 1,
-                      }}
-                    >
-                      <ArrowUp size={18} />
-                    </button>
+                      <button
+                        type="submit"
+                        aria-label="Send prompt"
+                        disabled={isSubmitDisabled}
+                        className="promptSubmit"
+                      >
+                        <ArrowUp size={18} />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              </form>
+                </form>
+              )}
+              {renderComposerExit()}
             </div>
           </div>
         ) : (
@@ -805,65 +1033,41 @@ export default function Chat() {
               <div ref={messagesEndRef} />
             </div>
 
-            <form className="chatForm" onSubmit={handleSubmit}>
-              <div className="inputWrapper">
-                <div
-                  style={{
-                    width: "100%",
-                    position: "relative",
-                    backgroundColor: "var(--card)",
-                    border: "1px solid var(--border)",
-                    borderRadius: "0.75rem",
-                    padding: "0.5rem",
-                    boxShadow: "0 0 0 1px var(--ring)",
-                  }}
-                >
-                  <textarea
-                    ref={textareaRef}
-                    className="chatInput"
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    placeholder="Enter your prompt here..."
-                    rows={1}
-                    disabled={loading || isAnimating}
-                    style={{
-                      width: "100%",
-                      paddingRight: 56,
-                      background: "transparent",
-                      border: "none",
-                      resize: "none",
-                      overflowY: "hidden",
-                    }}
-                  />
+            {shouldShowComposer && (
+              <form className="chatForm" onSubmit={handleSubmit}>
+                <div className="inputWrapper">
+                  <div className="promptComposer">
+                    <textarea
+                      ref={textareaRef}
+                      className="chatInput"
+                      value={prompt}
+                      onChange={(e) => setPrompt(e.target.value)}
+                      placeholder="Enter your prompt here..."
+                      rows={1}
+                      disabled={!shouldShowComposer}
+                      style={{
+                        width: "100%",
+                        paddingRight: 56,
+                        background: "transparent",
+                        border: "none",
+                        resize: "none",
+                        overflowY: "hidden",
+                      }}
+                    />
 
-                  <button
-                    type="submit"
-                    aria-label="Send prompt"
-                    disabled={isSubmitDisabled}
-                    style={{
-                      position: "absolute",
-                      right: 8,
-                      top: "50%",
-                      transform: "translateY(-50%)",
-                      border: "none",
-                      backgroundColor: "var(--primary)",
-                      color: "var(--primary-foreground)",
-                      width: 40,
-                      height: 40,
-                      borderRadius: 999,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      cursor:
-                        isSubmitDisabled ? "not-allowed" : "pointer",
-                      opacity: isSubmitDisabled ? 0.6 : 1,
-                    }}
-                  >
-                    <ArrowUp size={18} />
-                  </button>
+                    <button
+                      type="submit"
+                      aria-label="Send prompt"
+                      disabled={isSubmitDisabled}
+                      className="promptSubmit"
+                    >
+                      <ArrowUp size={18} />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </form>
+              </form>
+            )}
+            {renderComposerExit()}
           </>
         )}
       </div>

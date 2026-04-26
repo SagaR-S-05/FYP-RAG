@@ -9,7 +9,7 @@ import {
   useSidebar,
 } from "./components/sidebar.jsx";
 import { useSessions } from "./sessionContext.jsx";
-import { Info, Lightbulb, MessageSquare, PlayCircle, Plus } from "lucide-react";
+import { Info, MessageSquare, Moon, PlayCircle, Plus, Sun } from "lucide-react";
 
 function useHashRoute() {
   const getHash = () => window.location.hash || "#/";
@@ -56,6 +56,7 @@ function useDarkMode() {
 function AppShell() {
   const hash = useHashRoute();
   const { isDark, setIsDark } = useDarkMode();
+  const [showSplash, setShowSplash] = useState(true);
   const {
     sessions,
     activeSession,
@@ -74,6 +75,11 @@ function AppShell() {
     return "chat";
   }, [hash]);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => setShowSplash(false), 3200);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   const sortedSessions = useMemo(
     () => [...sessions].sort((a, b) => b.createdAt - a.createdAt),
     [sessions],
@@ -81,7 +87,7 @@ function AppShell() {
 
   const handleStartEditing = (session) => {
     setEditingId(session.id);
-    const fallbackTitle = session.title || `Chat ${session.id.slice(-4)}`;
+    const fallbackTitle = session.title || "New Chat";
     setEditingValue(fallbackTitle);
   };
 
@@ -95,6 +101,21 @@ function AppShell() {
 
   return (
     <div className="appShell">
+      <div className={showSplash ? "entrySplash" : "entrySplash entrySplashExit"} aria-hidden={!showSplash}>
+        <div className="entryGrid" />
+        <div className="entryBeam entryBeamOne" />
+        <div className="entryBeam entryBeamTwo" />
+        <div className="entryCompass">ML</div>
+        <div className="entryLogoWrap">
+          <div className="entryKicker">Prompt to animated intelligence</div>
+          <h1 className="entryTitle">MLViz</h1>
+          <div className="entrySubline">Loading visual engine</div>
+          <div className="entryLoader">
+            <span />
+          </div>
+        </div>
+      </div>
+
       <Sidebar>
         <div className="sidebarContent">
           {/* Static navigation items */}
@@ -142,19 +163,11 @@ function AppShell() {
             className="sidebarItem sidebarNewChat"
             onClick={() => {
               if (!activeSession || activeSession.messages.length === 0) {
+                window.location.hash = "#/";
                 return;
               }
-              const id = createAndSelectSession();
-              if (
-                !window.location.hash ||
-                window.location.hash === "#/about" ||
-                window.location.hash === "#/videos"
-              ) {
-                window.location.hash = "#/";
-              }
-              if (id) {
-                // id is already active via context
-              }
+              createAndSelectSession();
+              window.location.hash = "#/";
             }}
           >
             <span className="sidebarItemIcon">
@@ -169,8 +182,7 @@ function AppShell() {
                 route === "chat" && session.id === activeSessionId;
               const created = new Date(session.createdAt);
               const label = created.toLocaleTimeString();
-              const displayTitle =
-                session.title || `Chat ${session.id.slice(-4)}`;
+              const displayTitle = session.title || "New Chat";
               const isEditing = editingId === session.id;
 
               return (
@@ -238,8 +250,8 @@ function AppShell() {
             <div className="headerLeft">
               <SidebarTrigger aria-label="Toggle sidebar" />
               <div className="brand">
-                <div className="brandTitle">Manim RAG</div>
-                <div className="brandSubtitle">Prompt → video</div>
+                <div className="brandTitle">MLViz</div>
+                <div className="brandSubtitle">Prompt to video</div>
               </div>
             </div>
 
@@ -250,11 +262,16 @@ function AppShell() {
               aria-pressed={isDark}
               aria-label="Toggle theme"
             >
-              <Lightbulb size={20} />
+              <span className="themeIcon themeIconSun">
+                <Sun size={19} />
+              </span>
+              <span className="themeIcon themeIconMoon">
+                <Moon size={19} />
+              </span>
             </button>
           </header>
 
-          <main className="appMain">
+          <main className="appMain" key={route}>
             {route === "about" && <About />}
             {route === "videos" && <VideoGallery />}
             {route === "chat" && <Chat />}

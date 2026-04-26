@@ -13,6 +13,11 @@ import json
 from backend.pipeline.rag_pipeline import ManimRAG
 from backend.db.crud import save_prompt, save_generated_code, save_video
 from backend.services.insight_service import stream_insight
+from backend.services.domain_guard import (
+    DOMAIN_REJECTION_MESSAGE,
+    is_supported_domain,
+    validate_supported_domain,
+)
 
 router = APIRouter()
 MAX_RENDER_FIX_ATTEMPTS = 3
@@ -36,6 +41,11 @@ class GenerateResponse(BaseModel):
     code: str | None = None
     attempts: int | None = None
     quality_score: float | None = None
+
+
+class DomainValidationResponse(BaseModel):
+    allowed: bool
+    message: str | None = None
 
 
 class GalleryFolderRequest(BaseModel):
@@ -109,6 +119,102 @@ def sanitize_code(code: str):
 
     if not code.strip().startswith("from manim import *"):
         raise ValueError("Code must start with: from manim import *")
+
+
+UNSAFE_BUFF_CONSTRUCTORS = [
+    "Arrow3D",
+    "Line3D",
+    "ThreeDAxes",
+    "Dot3D",
+    "Dot",
+    "Text",
+    "MathTex",
+    "Tex",
+    "VGroup",
+    "Group",
+    "Circle",
+    "Square",
+    "Rectangle",
+    "Polygon",
+    "Cube",
+    "Sphere",
+    "Surface",
+]
+
+
+def _find_matching_paren(text: str, open_index: int) -> int | None:
+    depth = 0
+    quote = None
+    escaped = False
+
+    for index in range(open_index, len(text)):
+        char = text[index]
+
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+
+        if char in {"'", '"'}:
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return index
+
+    return None
+
+
+def _remove_buff_keyword(call_text: str) -> str:
+    without_middle_or_trailing = re.sub(
+        r",\s*buff\s*=\s*[^,\)\n]+",
+        "",
+        call_text,
+    )
+    return re.sub(
+        r"buff\s*=\s*[^,\)\n]+,\s*",
+        "",
+        without_middle_or_trailing,
+    )
+
+
+def normalize_manim_api_code(code: str) -> str:
+    normalized = code
+    for constructor in UNSAFE_BUFF_CONSTRUCTORS:
+        search_from = 0
+        pieces = []
+        changed = False
+        pattern = re.compile(rf"\b{re.escape(constructor)}\s*\(")
+
+        while True:
+            match = pattern.search(normalized, search_from)
+            if not match:
+                pieces.append(normalized[search_from:])
+                break
+
+            open_index = match.end() - 1
+            close_index = _find_matching_paren(normalized, open_index)
+            if close_index is None:
+                pieces.append(normalized[search_from:])
+                break
+
+            pieces.append(normalized[search_from:match.start()])
+            call_text = normalized[match.start():close_index + 1]
+            cleaned_call = _remove_buff_keyword(call_text)
+            pieces.append(cleaned_call)
+            changed = changed or cleaned_call != call_text
+            search_from = close_index + 1
+
+        if changed:
+            normalized = "".join(pieces)
+
+    return normalized
 
 
 def extract_render_error(output_dir: Path, result_proc: subprocess.CompletedProcess) -> str:
@@ -315,6 +421,11 @@ def generate(req: GenerateRequest):
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt cannot be empty")
 
+    try:
+        validate_supported_domain(prompt)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     # Store prompt in DB
     prompt_id = save_prompt(prompt)
 
@@ -333,6 +444,7 @@ def generate(req: GenerateRequest):
         result = rag.generate(prompt)
 
         code = result.get("code", "")
+        code = normalize_manim_api_code(code)
         success = result.get("success", False)
         attempts = result.get("attempts", 0)
         quality_score = result.get("quality_score", 0.0)
@@ -349,6 +461,7 @@ def generate(req: GenerateRequest):
         video_path = output_dir / "video.mp4"
 
         for render_attempt in range(1, MAX_RENDER_FIX_ATTEMPTS + 1):
+            code = normalize_manim_api_code(code)
             sanitize_code(code)
             scene_file.write_text(code, encoding="utf-8")
 
@@ -374,6 +487,7 @@ def generate(req: GenerateRequest):
             )
             result = rag.repair_runtime_error(prompt, code, render_error or refinement_request)
             code = result.get("code", "")
+            code = normalize_manim_api_code(code)
             success = result.get("success", False)
             total_attempts += result.get("attempts", 0)
             quality_score = result.get("quality_score", quality_score)
@@ -463,6 +577,11 @@ def generate_stream(req: GenerateRequest):
         if not prompt:
             yield event({"type": "error", "error": "prompt cannot be empty"})
             return
+        try:
+            validate_supported_domain(prompt)
+        except ValueError as exc:
+            yield event({"type": "error", "error": str(exc), "domain_rejected": True})
+            return
 
         work_dir = None
 
@@ -489,6 +608,7 @@ def generate_stream(req: GenerateRequest):
             result = rag.generate(prompt)
 
             code = result.get("code", "")
+            code = normalize_manim_api_code(code)
             success = result.get("success", False)
             attempts = result.get("attempts", 0)
             quality_score = result.get("quality_score", 0.0)
@@ -517,6 +637,7 @@ def generate_stream(req: GenerateRequest):
                     "message": f"Rendering attempt {render_attempt}",
                 })
 
+                code = normalize_manim_api_code(code)
                 sanitize_code(code)
                 scene_file.write_text(code, encoding="utf-8")
 
@@ -550,6 +671,7 @@ def generate_stream(req: GenerateRequest):
                 )
                 result = rag.repair_runtime_error(prompt, code, render_error or refinement_request)
                 code = result.get("code", "")
+                code = normalize_manim_api_code(code)
                 success = result.get("success", False)
                 total_attempts += result.get("attempts", 0)
                 quality_score = result.get("quality_score", quality_score)
@@ -625,11 +747,27 @@ def insight(prompt: str):
 
     if not prompt.strip():
         raise HTTPException(status_code=400, detail="prompt cannot be empty")
+    try:
+        validate_supported_domain(prompt)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return StreamingResponse(
         stream_insight(prompt),
         media_type="text/plain"
     )
+
+
+@router.post("/validate-domain", response_model=DomainValidationResponse)
+def validate_domain(req: GenerateRequest):
+    prompt = req.prompt.strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt cannot be empty")
+    allowed = is_supported_domain(prompt)
+    return {
+        "allowed": allowed,
+        "message": None if allowed else DOMAIN_REJECTION_MESSAGE,
+    }
 
 
 # =========================
